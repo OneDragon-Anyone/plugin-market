@@ -51,10 +51,20 @@ pnpm registry:build
 ## 插件包国内镜像（CNB）
 
 构建时可以把校验通过的插件 zip 原字节复制一份到 CNB 公开仓库，
-再把 `plugins.json` 里的 `downloadUrl` 指向 CNB，让国内用户直接走国内源。
-客户端无需改动 —— 非 `github.com` 地址会被判为 `direct` 直连。
+并在 `plugins.json` 里同时给出各源地址：
 
-镜像不可用时（上传失败、或原附件已被替换/删除）`downloadUrl` 回落 GitHub 原址。
+```json
+"sources": {
+  "github": "https://github.com/owner/repo/releases/download/v1/plugin.zip",
+  "cnb": "https://cnb.cool/OneDragon-Anyone/plugin-mirror/-/releases/download/v1/plugin.zip"
+}
+```
+
+客户端按「资源」页选择的下载源顺序挑选，与代码同步、资源下载共用同一套候选顺序；
+索引里没有的源会被跳过。`downloadUrl` 保留给网页与旧客户端，仍优先给 CNB 地址。
+
+镜像不可用时（上传失败、或原附件已被替换/删除）`sources` 不含 `cnb`，
+`downloadUrl` 回落 GitHub 原址。
 
 ### 数据仓侧配置
 

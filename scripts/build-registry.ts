@@ -333,6 +333,8 @@ function toRelease(tag: string, locked: LockRelease, live: GhRelease, repo: GhRe
     asset?.browser_download_url ??
     `https://github.com/${repo.full_name}/releases/download/${encodeURIComponent(tag)}/${locked.assetName}`;
   const mirrorUrl = assetIntact(locked, asset) ? locked.mirrorUrl : undefined;
+  const sources: Record<string, string> = { github: githubUrl };
+  if (mirrorUrl !== undefined) sources.cnb = mirrorUrl;
   return {
     version: locked.version,
     versionCode: locked.versionCode,
@@ -343,6 +345,7 @@ function toRelease(tag: string, locked: LockRelease, live: GhRelease, repo: GhRe
     publishedAt: publishedAt(live),
     changelogHtml: renderSafeHtml(live.body_html, repo.full_name, locked.commit),
     downloadUrl: mirrorUrl ?? githubUrl,
+    sources,
     assetName: locked.assetName,
     size: locked.size,
     sha256: locked.sha256

@@ -44,6 +44,8 @@ export interface PluginRelease {
   publishedAt: string;
   changelogHtml: string;
   downloadUrl: string;
+  /** 每个下载源各一份地址，键与资源下载源 ID 一致（github / cnb）。 */
+  sources?: Record<string, string>;
   assetName: string;
   size: number;
   sha256: string;
