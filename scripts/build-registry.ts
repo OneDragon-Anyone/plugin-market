@@ -16,7 +16,7 @@ import type {
 } from "../src/lib/types";
 import { type GhRelease, type GhRepo, github, githubText, listReleases, orNull, resolveTagCommit } from "./lib/github";
 import { renderSafeHtml } from "./lib/html";
-import { publishMirrorAsset, readMirrorTarget } from "./lib/cnb";
+import { publishIndexFile, publishMirrorAsset, readMirrorTarget } from "./lib/cnb";
 import { checkEntries, readEntryFiles, readPolicy, rootDir } from "./lib/registry";
 import { downloadAndValidate } from "./lib/validator";
 
@@ -490,6 +490,20 @@ async function writeApi(plugins: PluginEntry[]): Promise<void> {
   }
 }
 
+/** 把生成的 plugins.json 也发一份到镜像仓，客户端才能按下载源切换索引。 */
+async function publishIndexMirror(policy: RegistryPolicy): Promise<void> {
+  const target = readMirrorTarget(policy);
+  if (target === null) return;
+
+  try {
+    const url = await publishIndexFile(target, await readFile(join(apiDir, "plugins.json")));
+    report.push(`- ✅ index mirrored -> ${url}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    report.push(`- ⚠️ index mirror failed: ${message}`);
+  }
+}
+
 async function main(): Promise<void> {
   const policy = await readPolicy();
   const { entries, errors } = checkEntries(await readEntryFiles(), policy);
@@ -518,6 +532,7 @@ async function main(): Promise<void> {
   const sorted = sortPlugins(plugins);
   await openMirrorIssue();
   await writeApi(sorted);
+  await publishIndexMirror(policy);
   await writeJson(lockPath, lock);
 
   const summary = [`## Registry build`, ``, `Published ${sorted.length} / ${entries.length} plugins.`, ``, ...report].join("\n");

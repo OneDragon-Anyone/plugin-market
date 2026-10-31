@@ -66,6 +66,15 @@ pnpm registry:build
 镜像不可用时（上传失败、或原附件已被替换/删除）`sources` 不含 `cnb`，
 `downloadUrl` 回落 GitHub 原址。
 
+索引本身也会镜像一份到同一仓库的 `index` release：
+
+```
+https://cnb.cool/OneDragon-Anyone/plugin-mirror/-/releases/download/index/plugins.json
+```
+
+客户端按「资源」页选择的下载源顺序取索引（CNB 优先或 Pages 优先），
+其中一源不可用时自动改走另一个。封面仍在 Pages 站点上，只跟随代理设置。
+
 ### 数据仓侧配置
 
 `registry/policy.json` 增加 `mirror` 块：

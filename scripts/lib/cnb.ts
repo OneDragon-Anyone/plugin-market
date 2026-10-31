@@ -149,6 +149,9 @@ export function mirrorAssetName(id: string, versionCode: number): string {
   return `${id}-${versionCode}.zip`;
 }
 
+export const INDEX_RELEASE_TAG = "index";
+export const INDEX_ASSET_NAME = "plugins.json";
+
 export function mirrorDownloadUrl(target: MirrorTarget, tag: string, assetName: string): string {
   const site = target.api === DEFAULT_API ? SITE_ROOT : target.api;
   return `${site}/${target.repo}/-/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(assetName)}`;
@@ -158,7 +161,8 @@ async function uploadAsset(
   target: MirrorTarget,
   releaseId: string,
   assetName: string,
-  data: Buffer
+  data: Buffer,
+  contentType = "application/zip"
 ): Promise<void> {
   const ticket = await cnb<UploadTicket>(target, `/${target.repo}/-/releases/${releaseId}/asset-upload-url`, {
     method: "POST",
@@ -167,7 +171,7 @@ async function uploadAsset(
 
   const upload = await fetch(ticket.upload_url, {
     method: "PUT",
-    headers: { "Content-Type": "application/zip", "User-Agent": USER_AGENT },
+    headers: { "Content-Type": contentType, "User-Agent": USER_AGENT },
     body: new Uint8Array(data)
   });
   if (!upload.ok) {
@@ -221,6 +225,20 @@ export async function publishMirrorAsset(
 
   const pruned = await pruneAssets(target, release.id, id, target.keepReleases);
   return { url: mirrorDownloadUrl(target, releaseTag, assetName), pruned };
+}
+
+/** 把索引本身也镜像一份，供客户端按下载源切换。 */
+export async function publishIndexFile(target: MirrorTarget, data: Buffer): Promise<string> {
+  const releaseTag = `${target.tagPrefix}${INDEX_RELEASE_TAG}`;
+  const release = await ensureRelease(target, releaseTag, target.branch);
+  await uploadAsset(target, release.id, INDEX_ASSET_NAME, data, "application/json");
+
+  const uploaded = await findAsset(target, release.id, INDEX_ASSET_NAME);
+  if (uploaded === null) throw new Error(`索引附件 ${INDEX_ASSET_NAME} 上传后未能查到`);
+  if (uploaded.size !== data.length) {
+    throw new Error(`索引附件大小不一致：本地 ${data.length}，远端 ${uploaded.size}`);
+  }
+  return mirrorDownloadUrl(target, releaseTag, INDEX_ASSET_NAME);
 }
 
 async function pruneAssets(
