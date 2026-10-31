@@ -1,9 +1,14 @@
-import { readFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import type { RegistryPolicy } from "../../src/lib/types";
 
 const DEFAULT_API = "https://api.cnb.cool";
 const SITE_ROOT = "https://cnb.cool";
 const USER_AGENT = "zzzod-plugin-market";
+const runGit = promisify(execFile);
 
 export class CnbError extends Error {
   constructor(
@@ -149,20 +154,26 @@ export function mirrorAssetName(id: string, versionCode: number): string {
   return `${id}-${versionCode}.zip`;
 }
 
-export const INDEX_RELEASE_TAG = "index";
-export const INDEX_ASSET_NAME = "plugins.json";
+export const INDEX_FILE = "plugins.json";
+
+function siteUrlOf(target: MirrorTarget): string {
+  return target.api === DEFAULT_API ? SITE_ROOT : target.api;
+}
 
 export function mirrorDownloadUrl(target: MirrorTarget, tag: string, assetName: string): string {
-  const site = target.api === DEFAULT_API ? SITE_ROOT : target.api;
+  const site = siteUrlOf(target);
   return `${site}/${target.repo}/-/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(assetName)}`;
+}
+
+function redact(text: string, token: string): string {
+  return text.split(token).join("***").split(encodeURIComponent(token)).join("***");
 }
 
 async function uploadAsset(
   target: MirrorTarget,
   releaseId: string,
   assetName: string,
-  data: Buffer,
-  contentType = "application/zip"
+  data: Buffer
 ): Promise<void> {
   const ticket = await cnb<UploadTicket>(target, `/${target.repo}/-/releases/${releaseId}/asset-upload-url`, {
     method: "POST",
@@ -171,7 +182,7 @@ async function uploadAsset(
 
   const upload = await fetch(ticket.upload_url, {
     method: "PUT",
-    headers: { "Content-Type": contentType, "User-Agent": USER_AGENT },
+    headers: { "Content-Type": "application/zip", "User-Agent": USER_AGENT },
     body: new Uint8Array(data)
   });
   if (!upload.ok) {
@@ -227,18 +238,61 @@ export async function publishMirrorAsset(
   return { url: mirrorDownloadUrl(target, releaseTag, assetName), pruned };
 }
 
-/** 把索引本身也镜像一份，供客户端按下载源切换。 */
-export async function publishIndexFile(target: MirrorTarget, data: Buffer): Promise<string> {
-  const releaseTag = `${target.tagPrefix}${INDEX_RELEASE_TAG}`;
-  const release = await ensureRelease(target, releaseTag, target.branch);
-  await uploadAsset(target, release.id, INDEX_ASSET_NAME, data, "application/json");
-
-  const uploaded = await findAsset(target, release.id, INDEX_ASSET_NAME);
-  if (uploaded === null) throw new Error(`索引附件 ${INDEX_ASSET_NAME} 上传后未能查到`);
-  if (uploaded.size !== data.length) {
-    throw new Error(`索引附件大小不一致：本地 ${data.length}，远端 ${uploaded.size}`);
+/**
+ * 桌面端不读 stars / downloads，镜像前去掉。
+ *
+ * 这两个字段每次构建都会重新抓，留着会让索引内容随下载量漂移，每次构建都多一笔提交。
+ * 解析失败时原样返回，宁可多提交一次也不破坏索引。
+ */
+function stripStats(data: Buffer): Buffer {
+  try {
+    const list = JSON.parse(data.toString("utf-8")) as Record<string, unknown>[];
+    if (!Array.isArray(list)) return data;
+    for (const item of list) {
+      delete item.stars;
+      delete item.downloads;
+    }
+    return Buffer.from(`${JSON.stringify(list, null, 2)}\n`);
+  } catch {
+    return data;
   }
-  return mirrorDownloadUrl(target, releaseTag, INDEX_ASSET_NAME);
+}
+
+/**
+ * 把索引作为一个普通文件提交到镜像仓，客户端用 raw 直链读取。
+ *
+ * 内容没变就不提交，避免定时构建把仓库历史堆满。
+ */
+export async function publishIndexFile(target: MirrorTarget, data: Buffer): Promise<string> {
+  const remote = `${siteUrlOf(target)}/${target.repo}`;
+  const url = `${remote}/-/git/raw/${target.branch}/${INDEX_FILE}`;
+  const payload = stripStats(data);
+  const existing = await fetch(url, { headers: { "User-Agent": USER_AGENT } }).catch(() => null);
+  if (existing?.ok && Buffer.from(await existing.arrayBuffer()).equals(payload)) return url;
+
+  const dir = await mkdtemp(join(tmpdir(), "cnb-index-"));
+  const authRemote = remote.replace("://", `://cnb:${encodeURIComponent(target.token)}@`);
+  try {
+    await runGit("git", ["clone", "-q", "--depth", "1", "--branch", target.branch, authRemote, dir]);
+    await writeFile(join(dir, INDEX_FILE), payload);
+    await runGit("git", ["add", INDEX_FILE], { cwd: dir });
+    await runGit(
+      "git",
+      [
+        "-c", "user.name=plugin-market",
+        "-c", "user.email=plugin-market@users.noreply.github.com",
+        "commit", "-q", "-m", `chore: sync plugins.json (build ${(process.env.GITHUB_SHA ?? "local").slice(0, 7)})`
+      ],
+      { cwd: dir }
+    );
+    await runGit("git", ["push", "-q", authRemote, `HEAD:refs/heads/${target.branch}`], { cwd: dir });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`索引推送失败：${redact(message, target.token)}`);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+  return url;
 }
 
 async function pruneAssets(

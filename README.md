@@ -66,10 +66,12 @@ pnpm registry:build
 镜像不可用时（上传失败、或原附件已被替换/删除）`sources` 不含 `cnb`，
 `downloadUrl` 回落 GitHub 原址。
 
-索引本身也会镜像一份到同一仓库的 `index` release：
+索引本身也镜像一份到同一仓库的根目录（`plugins.json`），和读 GitHub Pages 上的文件
+一样直接读它。镜像版会去掉 `stars` / `downloads` 两个统计字段——桌面客户端不读它们，
+留着会让内容随下载量漂移、每次构建都多一笔提交；去掉后只有插件元数据真变了才提交：
 
 ```
-https://cnb.cool/OneDragon-Anyone/plugin-mirror/-/releases/download/index/plugins.json
+https://cnb.cool/OneDragon-Anyone/plugin-mirror/-/git/raw/main/plugins.json
 ```
 
 客户端按「资源」页选择的下载源顺序取索引（CNB 优先或 Pages 优先），
@@ -92,7 +94,8 @@ https://cnb.cool/OneDragon-Anyone/plugin-mirror/-/releases/download/index/plugin
 
 ### 密钥
 
-数据仓 Settings → Secrets 里加 `CNB_TOKEN`（对该镜像仓库有写权限）。
+数据仓 Settings → Secrets 里加 `CNB_TOKEN`（对该镜像仓库有写权限：上传 release 附件
+走 `repo-release`，提交索引文件走 `repo-code`）。
 调用方 workflow 需带 `secrets: inherit` 才会传进 reusable 工作流。
 
 可选环境变量：`CNB_MIRROR_REPO`、`CNB_API_ENDPOINT`、`CNB_MIRROR_BRANCH`。
@@ -102,7 +105,7 @@ https://cnb.cool/OneDragon-Anyone/plugin-mirror/-/releases/download/index/plugin
 
 | 文件 | 职责 |
 |---|---|
-| `scripts/lib/cnb.ts` | CNB OpenAPI 客户端：查/建 release、建 tag、申请上传地址、PUT、确认、回读校验、清理旧附件 |
+| `scripts/lib/cnb.ts` | CNB OpenAPI 客户端：查/建 release、建 tag、申请上传地址、PUT、确认、回读校验、清理旧附件；索引走 git 提交到仓库根目录 |
 | `scripts/build-registry.ts` | `publishMirror()` 新版本上传；`republishMirror()` 给缺镜像的旧版本补传 |
 | `src/lib/types.ts` | `RegistryPolicy.mirror`、`WarningCode.mirror_failed` |
 
