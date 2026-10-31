@@ -19,7 +19,7 @@ jobs:
       - name: Checkout tools
         uses: actions/checkout@v6
         with:
-          repository: OneDragon-Anyone/plugin-registry
+          repository: OneDragon-Anyone/plugin-market
           ref: v1
           path: .tools
           persist-credentials: false

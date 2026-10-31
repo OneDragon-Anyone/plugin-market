@@ -1,5 +1,5 @@
 export const siteConfig = {
-  name: "ZZZ OneDragon Plugin Registry",
+  name: "ZZZ OneDragon Plugin Market",
   shortName: "ZZZOD Plugins",
   repoOwner: import.meta.env.PUBLIC_GITHUB_OWNER ?? "OneDragon-Anyone",
   repoName: import.meta.env.PUBLIC_GITHUB_REPO ?? "plugin-data",

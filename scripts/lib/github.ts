@@ -1,5 +1,5 @@
 const API = "https://api.github.com";
-const USER_AGENT = "zzzod-plugin-registry";
+const USER_AGENT = "zzzod-plugin-market";
 
 export class GitHubError extends Error {
   constructor(

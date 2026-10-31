@@ -3,7 +3,7 @@ import type { RegistryPolicy } from "../../src/lib/types";
 
 const DEFAULT_API = "https://api.cnb.cool";
 const SITE_ROOT = "https://cnb.cool";
-const USER_AGENT = "zzzod-plugin-registry";
+const USER_AGENT = "zzzod-plugin-market";
 
 export class CnbError extends Error {
   constructor(
@@ -136,7 +136,7 @@ export async function ensureRelease(
     body: {
       tag_name: tag,
       name: tag,
-      body: "插件安装包镜像，由 plugin-registry 自动生成",
+      body: "插件安装包镜像，由 plugin-market 自动生成",
       target_commitish: commitish,
       draft: false,
       prerelease: false,

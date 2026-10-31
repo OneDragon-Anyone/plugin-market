@@ -1,9 +1,9 @@
-# ZZZOD Plugin Registry (代码仓)
+# ZZZOD 插件市场仓
 
-ZZZOD 插件应用中心的核心代码库，包含插件商店网页端（WebUI）、自动化收录机器人以及构建索引脚本。
+自动审核插件提交、定时构建索引、渲染市场网页，并把安装包镜像到国内下载源。
 
-- 🌐 **在线商店**：[https://onedragon-anyone.github.io/plugin-data/](https://onedragon-anyone.github.io/plugin-data/)
-- 📦 **插件数据仓**：[OneDragon-Anyone/plugin-data](https://github.com/OneDragon-Anyone/plugin-data)（存放插件审核配置与索引数据）
+- 🌐 **在线插件市场**：[https://onedragon-anyone.github.io/plugin-data/](https://onedragon-anyone.github.io/plugin-data/)
+- 📦 **配套数据仓**：[OneDragon-Anyone/plugin-data](https://github.com/OneDragon-Anyone/plugin-data)（存放插件收录配置与索引）
 
 ---
 
@@ -97,7 +97,7 @@ pnpm registry:build
 
 ## 版本与引用规范
 
-- 本仓库供数据仓引用的 GitHub Actions 统一遵循 `@vN` 版本规范（当前 `v2`）。
-- 功能改进维护在 `master` 分支，确认稳定后推进对应的 `v2` 标签；
-  数据仓通过 tag 快照引用，因此"先合 registry → 再打 tag → 再切数据仓 `@vN`"
-  的顺序是安全的。
+- 数据仓通过 `@v1` 引用本仓库的可复用工作流。
+- `v1` 是可移动的主版本标签：功能改进维护在 `master`，确认稳定后把 `v1` 前移到最新提交，
+  消费者无需改动引用。工作流内部 `Checkout tools` 的 `ref` 也用 `v1`，保证工具代码与
+  工作流文件来自同一个提交。
