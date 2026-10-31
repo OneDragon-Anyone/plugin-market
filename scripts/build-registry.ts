@@ -61,6 +61,7 @@ const apiDir = join(rootDir, "public", "api", "v1");
 const previousApiUrl = process.env.PREVIOUS_API_URL ?? "";
 const now = new Date();
 const report: string[] = [];
+const mirrorFailures: { id: string; version: string; message: string }[] = [];
 
 async function readLock(): Promise<Lock> {
   return existsSync(lockPath) ? (JSON.parse(await readFile(lockPath, "utf-8")) as Lock) : {};
@@ -96,11 +97,46 @@ async function openStaleIssue(entry: RegistrySourceEntry, days: number): Promise
     method: "POST",
     body: {
       title: `[stale] ${entry.id} 的仓库已连续 ${days} 天无法访问`,
-      body: `插件 \`${entry.id}\`（repoId ${entry.repoId}，提交时为 \`${entry.repo}\`）的仓库已连续 ${days} 天无法访问，网站已标记为 stale。\n\n请维护者确认后决定是否将 \`status\` 改为 \`suspended\`。`,
-      labels: ["stale"]
+      body: `插件 \`${entry.id}\`（repoId ${entry.repoId}，提交时为 \`${entry.repo}\`）的仓库已连续 ${days} 天无法访问，网站已标记为 stale。\n\n请维护者确认后决定是否将 \`status\` 改为 \`suspended\`。`
     }
   });
   return issue.number;
+}
+
+/** 镜像失败只会静默降级到 GitHub 原地址，开个 issue 提醒维护者。 */
+async function openMirrorIssue(): Promise<void> {
+  if (mirrorFailures.length === 0) return;
+  const registryRepo = process.env.GITHUB_REPOSITORY;
+  const detail = mirrorFailures.map((item) => `- \`${item.id}\` ${item.version}：${item.message}`);
+  const runUrl = `${process.env.GITHUB_SERVER_URL ?? "https://github.com"}/${registryRepo}/actions/runs/${process.env.GITHUB_RUN_ID ?? ""}`;
+  if (!registryRepo || process.env.REGISTRY_OPEN_ISSUES !== "true") return;
+  try {
+    // 定时构建每小时一次，未关闭的同名 issue 存在时不再重复开
+    const query = encodeURIComponent(`repo:${registryRepo} is:issue is:open in:title "[mirror]"`);
+    const existing = await github<{ total_count: number }>(
+      `https://api.github.com/search/issues?q=${query}`
+    );
+    if (existing.total_count > 0) {
+      report.push(`- ⚠️ 镜像失败 ${mirrorFailures.length} 个，已有未关闭的告警 issue`);
+      return;
+    }
+    const issue = await github<{ number: number }>(`/repos/${registryRepo}/issues`, {
+      method: "POST",
+      body: {
+        title: "[mirror] 安装包镜像上传失败",
+        body: [
+          "以下插件包没能传到国内镜像，对应版本的下载会退回 GitHub 原地址：",
+          "",
+          ...detail,
+          "",
+          `构建记录：${runUrl}`
+        ].join("\n")
+      }
+    });
+    report.push(`- ⚠️ 镜像失败 ${mirrorFailures.length} 个，已开 issue #${issue.number}`);
+  } catch (error) {
+    report.push(`- ⚠️ 镜像失败 ${mirrorFailures.length} 个，开 issue 失败：${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 async function fallbackEntry(
@@ -147,6 +183,7 @@ async function publishMirror(
     return result.url;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    mirrorFailures.push({ id, version, message });
     warnings.push({
       code: "mirror_failed",
       message: `镜像到国内下载源失败，继续使用 GitHub 原地址：${message}`,
@@ -469,6 +506,7 @@ async function main(): Promise<void> {
   }
 
   const sorted = sortPlugins(plugins);
+  await openMirrorIssue();
   await writeApi(sorted);
   await writeJson(lockPath, lock);
 
