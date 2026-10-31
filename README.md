@@ -54,6 +54,8 @@ pnpm registry:build
 再把 `plugins.json` 里的 `downloadUrl` 指向 CNB，让国内用户直接走国内源。
 客户端无需改动 —— 非 `github.com` 地址会被判为 `direct` 直连。
 
+镜像不可用时（上传失败、或原附件已被替换/删除）`downloadUrl` 回落 GitHub 原址。
+
 ### 数据仓侧配置
 
 `registry/policy.json` 增加 `mirror` 块：
@@ -89,9 +91,8 @@ pnpm registry:build
 
 - **必须原字节上传**：客户端强制核对 sha256，重新打包会导致安装被拒
 - 上传后回读一次 `hash_value` 比对，不一致直接抛错，不写入产物
-- 幂等靠锁文件的 `mirrorUrl` 字段；单次上传失败只记 `mirror_failed` 告警并回落到
-  GitHub 原地址，下次构建自动补传
-- 完整 PRD 见主仓 `docs/develop/plugin_mirror_prd.md`
+- 幂等靠锁文件的 `mirrorUrl` 字段；单次上传失败只记 `mirror_failed` 告警，该版本
+  回落到 GitHub 原址，下次构建自动补传
 
 ---
 

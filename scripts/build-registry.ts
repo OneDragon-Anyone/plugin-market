@@ -321,8 +321,18 @@ async function acceptNewReleases(
   }
 }
 
+/** 收录时的附件是否仍原样存在，被替换或删除后不再使用镜像，避免继续下发旧包。 */
+function assetIntact(locked: LockRelease, asset: GhRelease["assets"][number] | undefined): boolean {
+  if (asset === undefined || asset.id !== locked.assetId || asset.size !== locked.size) return false;
+  return asset.digest ? asset.digest === `sha256:${locked.sha256}` : true;
+}
+
 function toRelease(tag: string, locked: LockRelease, live: GhRelease, repo: GhRepo): PluginRelease {
   const asset = live.assets.find((item) => item.id === locked.assetId);
+  const githubUrl =
+    asset?.browser_download_url ??
+    `https://github.com/${repo.full_name}/releases/download/${encodeURIComponent(tag)}/${locked.assetName}`;
+  const mirrorUrl = assetIntact(locked, asset) ? locked.mirrorUrl : undefined;
   return {
     version: locked.version,
     versionCode: locked.versionCode,
@@ -332,10 +342,7 @@ function toRelease(tag: string, locked: LockRelease, live: GhRelease, repo: GhRe
     immutable: live.immutable ?? false,
     publishedAt: publishedAt(live),
     changelogHtml: renderSafeHtml(live.body_html, repo.full_name, locked.commit),
-    downloadUrl:
-      locked.mirrorUrl ??
-      asset?.browser_download_url ??
-      `https://github.com/${repo.full_name}/releases/download/${encodeURIComponent(tag)}/${locked.assetName}`,
+    downloadUrl: mirrorUrl ?? githubUrl,
     assetName: locked.assetName,
     size: locked.size,
     sha256: locked.sha256
