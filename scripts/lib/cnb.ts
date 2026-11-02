@@ -276,7 +276,8 @@ export async function publishIndexFile(
   try {
     await runGit("git", ["clone", "-q", "--depth", "1", "--branch", target.branch, authRemote, dir]);
     await writeFile(join(dir, INDEX_FILE), stripStats(data));
-    // 封面跟索引放同级，客户端按「索引目录 + cover」拼地址
+    // 封面跟索引放同级，客户端按「索引目录 + cover」拼地址；只保留本次构建的封面，旧版本图不残留
+    await rm(join(dir, "covers"), { recursive: true, force: true });
     if (existsSync(coversDir)) await cp(coversDir, join(dir, "covers"), { recursive: true });
     await runGit("git", ["add", "-A"], { cwd: dir });
     const staged = await runGit("git", ["status", "--porcelain"], { cwd: dir });
