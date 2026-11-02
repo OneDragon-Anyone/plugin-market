@@ -66,16 +66,18 @@ pnpm registry:build
 镜像不可用时（上传失败、或原附件已被替换/删除）`sources` 不含 `cnb`，
 `downloadUrl` 回落 GitHub 原址。
 
-索引本身也镜像一份到同一仓库的根目录（`plugins.json`），和读 GitHub Pages 上的文件
-一样直接读它。镜像版会去掉 `stars` / `downloads` 两个统计字段——桌面客户端不读它们，
-留着会让内容随下载量漂移、每次构建都多一笔提交；去掉后只有插件元数据真变了才提交：
+索引和封面也镜像一份到同一仓库的根目录（`plugins.json` 与 `covers/`），和读 GitHub Pages
+上的文件一样直接读它们。索引的镜像版会去掉 `stars` / `downloads` 两个统计字段——桌面客户端
+不读它们，留着会让内容随下载量漂移、每次构建都多一笔提交；去掉后只有插件元数据真变了才提交：
 
 ```
 https://cnb.cool/OneDragon-Anyone/plugin-mirror/-/git/raw/main/plugins.json
+https://cnb.cool/OneDragon-Anyone/plugin-mirror/-/git/raw/main/covers/xxx.webp
 ```
 
-客户端按「资源」页选择的下载源顺序取索引（CNB 优先或 Pages 优先），
-其中一源不可用时自动改走另一个。封面仍在 Pages 站点上，只跟随代理设置。
+客户端按「资源」页选择的下载源顺序取索引（CNB 优先或 Pages 优先），其中一源不可用时
+自动改走另一个。封面按各源索引所在的目录各拼一份，同样按这套候选顺序挑；镜像里只保留
+本次构建引用的封面，旧版本图不残留。
 
 ### 数据仓侧配置
 
