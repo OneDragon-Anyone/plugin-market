@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -259,29 +260,33 @@ function stripStats(data: Buffer): Buffer {
 }
 
 /**
- * 把索引作为一个普通文件提交到镜像仓，客户端用 raw 直链读取。
+ * 把索引和封面作为普通文件提交到镜像仓，客户端用 raw 直链读取。
  *
  * 内容没变就不提交，避免定时构建把仓库历史堆满。
  */
-export async function publishIndexFile(target: MirrorTarget, data: Buffer): Promise<string> {
+export async function publishIndexFile(
+  target: MirrorTarget,
+  data: Buffer,
+  coversDir: string
+): Promise<string> {
   const remote = `${siteUrlOf(target)}/${target.repo}`;
   const url = `${remote}/-/git/raw/${target.branch}/${INDEX_FILE}`;
-  const payload = stripStats(data);
-  const existing = await fetch(url, { headers: { "User-Agent": USER_AGENT } }).catch(() => null);
-  if (existing?.ok && Buffer.from(await existing.arrayBuffer()).equals(payload)) return url;
-
   const dir = await mkdtemp(join(tmpdir(), "cnb-index-"));
   const authRemote = remote.replace("://", `://cnb:${encodeURIComponent(target.token)}@`);
   try {
     await runGit("git", ["clone", "-q", "--depth", "1", "--branch", target.branch, authRemote, dir]);
-    await writeFile(join(dir, INDEX_FILE), payload);
-    await runGit("git", ["add", INDEX_FILE], { cwd: dir });
+    await writeFile(join(dir, INDEX_FILE), stripStats(data));
+    // 封面跟索引放同级，客户端按「索引目录 + cover」拼地址
+    if (existsSync(coversDir)) await cp(coversDir, join(dir, "covers"), { recursive: true });
+    await runGit("git", ["add", "-A"], { cwd: dir });
+    const staged = await runGit("git", ["status", "--porcelain"], { cwd: dir });
+    if (staged.stdout.trim() === "") return url;
     await runGit(
       "git",
       [
         "-c", "user.name=plugin-market",
         "-c", "user.email=plugin-market@users.noreply.github.com",
-        "commit", "-q", "-m", `chore: sync plugins.json (build ${(process.env.GITHUB_SHA ?? "local").slice(0, 7)})`
+        "commit", "-q", "-m", `chore: sync index and covers (build ${(process.env.GITHUB_SHA ?? "local").slice(0, 7)})`
       ],
       { cwd: dir }
     );

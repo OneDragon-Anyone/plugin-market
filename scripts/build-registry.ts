@@ -496,7 +496,11 @@ async function publishIndexMirror(policy: RegistryPolicy): Promise<void> {
   if (target === null) return;
 
   try {
-    const url = await publishIndexFile(target, await readFile(join(apiDir, "plugins.json")));
+    const url = await publishIndexFile(
+      target,
+      await readFile(join(apiDir, "plugins.json")),
+      join(apiDir, "covers")
+    );
     report.push(`- ✅ index mirrored -> ${url}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
