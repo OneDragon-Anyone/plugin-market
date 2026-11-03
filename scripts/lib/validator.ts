@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { RegistryPolicy } from "../../src/lib/types";
+import type { MarketPolicy } from "../../src/lib/types";
 import { downloadBytes, type GhRelease, listReleases } from "./github";
 
 export interface ValidatorResult {
@@ -46,7 +46,7 @@ export interface ZipCheck {
 export async function downloadAndValidate(
   url: string,
   zipPath: string,
-  options: { expectId: string; expectTag: string; policy: RegistryPolicy; coverOut?: string }
+  options: { expectId: string; expectTag: string; policy: MarketPolicy; coverOut?: string }
 ): Promise<ZipCheck> {
   const data = await downloadBytes(url, options.policy.maxZipBytes);
   await writeFile(zipPath, data);
@@ -76,7 +76,7 @@ export interface LatestReleaseCheck {
 export async function checkLatestRelease(
   fullName: string,
   id: string,
-  policy: RegistryPolicy,
+  policy: MarketPolicy,
   workDir: string
 ): Promise<LatestReleaseCheck> {
   const assetName = `${id}.zip`;

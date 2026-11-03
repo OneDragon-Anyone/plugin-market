@@ -1,4 +1,4 @@
-export type RegistryStatus = "listed" | "hidden" | "deprecated" | "suspended" | "removed";
+export type MarketStatus = "listed" | "hidden" | "deprecated" | "suspended" | "removed";
 
 export const RISK_TAGS = [
   "filesystem",
@@ -77,7 +77,7 @@ export interface PluginEntry {
   readmeHtml: string;
   tags: string[];
   risk: RiskTag[];
-  status: Exclude<RegistryStatus, "removed">;
+  status: Exclude<MarketStatus, "removed">;
   pinned: boolean;
   warnings: PluginWarning[];
   compatibility: PluginCompatibility;
@@ -88,7 +88,7 @@ export interface PluginEntry {
   updatedAt: string;
 }
 
-export interface RegistryIndex {
+export interface MarketIndex {
   schemaVersion: 1;
   generatedAt: string;
   buildId: string;
@@ -104,13 +104,13 @@ export interface SearchEntry {
   risk: RiskTag[];
 }
 
-export interface RegistrySourceEntry {
+export interface MarketSourceEntry {
   id: string;
   repo: string;
   repoId: number;
   tags: string[];
   extraRisk?: RiskTag[];
-  status: RegistryStatus;
+  status: MarketStatus;
   pinned?: boolean;
   review: {
     issue?: number;
@@ -119,7 +119,7 @@ export interface RegistrySourceEntry {
   };
 }
 
-export interface RegistryMirrorPolicy {
+export interface MarketMirrorPolicy {
   /** 是否启用国内下载源镜像 */
   enabled: boolean;
   /** 镜像附件存放的仓库 格式 组织名称/仓库名称 */
@@ -134,7 +134,7 @@ export interface RegistryMirrorPolicy {
   keepReleases?: number;
 }
 
-export interface RegistryPolicy {
+export interface MarketPolicy {
   reservedIds: string[];
   bannedRepoIds: number[];
   bannedUsers: string[];
@@ -147,5 +147,5 @@ export interface RegistryPolicy {
     windowHours: number;
   };
   /** 国内下载源镜像配置 未配置或关闭时行为与改造前一致 */
-  mirror?: RegistryMirrorPolicy;
+  mirror?: MarketMirrorPolicy;
 }

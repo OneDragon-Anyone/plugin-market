@@ -1,7 +1,7 @@
-import type { PluginEntry, PluginRelease, RegistryStatus, RiskTag } from "./types";
+import type { PluginEntry, PluginRelease, MarketStatus, RiskTag } from "./types";
 import { withBase } from "./utils";
 
-export const statusLabels: Record<RegistryStatus, string> = {
+export const statusLabels: Record<MarketStatus, string> = {
   listed: "已上架",
   deprecated: "已弃用",
   hidden: "已隐藏",
@@ -9,7 +9,7 @@ export const statusLabels: Record<RegistryStatus, string> = {
   removed: "已移除"
 };
 
-export function statusColor(value: RegistryStatus): string {
+export function statusColor(value: MarketStatus): string {
   if (value === "listed") return "green";
   if (value === "deprecated") return "orange";
   if (value === "hidden") return "gray";

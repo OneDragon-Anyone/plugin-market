@@ -2,14 +2,14 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { RegistryPolicy, RegistrySourceEntry } from "../src/lib/types";
+import type { MarketPolicy, MarketSourceEntry } from "../src/lib/types";
 import { GitHubError, type GhRepo, github, orNull } from "./lib/github";
-import { formatEntry, ID_PATTERN, MAX_TAGS, pluginsDir, readPolicy, TAG_PATTERN } from "./lib/registry";
+import { formatEntry, ID_PATTERN, MAX_TAGS, pluginsDir, readPolicy, TAG_PATTERN } from "./lib/market";
 import { checkLatestRelease } from "./lib/validator";
 
-const registryRepo = process.env.GITHUB_REPOSITORY ?? "";
-const baseBranch = process.env.REGISTRY_BASE_BRANCH ?? "master";
-const siteUrl = process.env.REGISTRY_SITE_URL ?? "";
+const marketRepo = process.env.GITHUB_REPOSITORY ?? "";
+const baseBranch = process.env.MARKET_BASE_BRANCH ?? "master";
+const siteUrl = process.env.MARKET_SITE_URL ?? "";
 const MAINTAINER_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 const PREFIX = /^\s*\[(submission|transfer|report|appeal)\]/i;
 
@@ -49,7 +49,7 @@ async function ensureLabels(): Promise<void> {
   if (labelsReady) return;
   for (const [name, label] of Object.entries(LABELS)) {
     try {
-      await github(`/repos/${registryRepo}/labels`, { method: "POST", body: { name, ...label } });
+      await github(`/repos/${marketRepo}/labels`, { method: "POST", body: { name, ...label } });
     } catch (error) {
       if (!(error instanceof GitHubError && error.status === 422)) throw error;
     }
@@ -59,21 +59,21 @@ async function ensureLabels(): Promise<void> {
 
 async function addLabels(issue: number, labels: string[]): Promise<void> {
   await ensureLabels();
-  await github(`/repos/${registryRepo}/issues/${issue}/labels`, { method: "POST", body: { labels } });
+  await github(`/repos/${marketRepo}/issues/${issue}/labels`, { method: "POST", body: { labels } });
 }
 
 async function removeLabels(issue: number, labels: string[]): Promise<void> {
   for (const label of labels) {
-    await orNull(github(`/repos/${registryRepo}/issues/${issue}/labels/${encodeURIComponent(label)}`, { method: "DELETE" }));
+    await orNull(github(`/repos/${marketRepo}/issues/${issue}/labels/${encodeURIComponent(label)}`, { method: "DELETE" }));
   }
 }
 
 async function comment(issue: number, body: string): Promise<void> {
-  await github(`/repos/${registryRepo}/issues/${issue}/comments`, { method: "POST", body: { body } });
+  await github(`/repos/${marketRepo}/issues/${issue}/comments`, { method: "POST", body: { body } });
 }
 
 async function closeIssue(issue: number, reason: "completed" | "not_planned"): Promise<void> {
-  await github(`/repos/${registryRepo}/issues/${issue}`, { method: "PATCH", body: { state: "closed", state_reason: reason } });
+  await github(`/repos/${marketRepo}/issues/${issue}`, { method: "PATCH", body: { state: "closed", state_reason: reason } });
 }
 
 function parseRepoUrl(body: string): { owner: string; name: string } | null {
@@ -95,9 +95,9 @@ function parseTags(body: string): string[] {
   ];
 }
 
-async function overRateLimit(login: string, policy: RegistryPolicy): Promise<boolean> {
+async function overRateLimit(login: string, policy: MarketPolicy): Promise<boolean> {
   const since = new Date(Date.now() - policy.rateLimit.windowHours * 3_600_000).toISOString().slice(0, 19);
-  const query = `repo:${registryRepo} is:issue author:${login} "[submission]" in:title created:>=${since}`;
+  const query = `repo:${marketRepo} is:issue author:${login} "[submission]" in:title created:>=${since}`;
   const result = await github<{ total_count: number }>(`/search/issues?q=${encodeURIComponent(query)}`);
   return result.total_count > policy.rateLimit.maxOpenSubmissionsPerUser;
 }
@@ -173,11 +173,11 @@ async function findPackageManifest(
 interface SubmissionCheck {
   errors: string[];
   notes: string[];
-  entry?: RegistrySourceEntry;
+  entry?: MarketSourceEntry;
   preview?: string;
 }
 
-async function checkSubmission(issue: Issue, policy: RegistryPolicy, workDir: string): Promise<SubmissionCheck> {
+async function checkSubmission(issue: Issue, policy: MarketPolicy, workDir: string): Promise<SubmissionCheck> {
   const errors: string[] = [];
   const notes: string[] = [];
   const body = issue.body ?? "";
@@ -214,7 +214,7 @@ async function checkSubmission(issue: Issue, policy: RegistryPolicy, workDir: st
 
   const entryPath = join(pluginsDir, `${id}.json`);
   if (existsSync(entryPath)) {
-    const existing = JSON.parse(await readFile(entryPath, "utf-8")) as RegistrySourceEntry;
+    const existing = JSON.parse(await readFile(entryPath, "utf-8")) as MarketSourceEntry;
     errors.push(
       existing.repoId === repo.id
         ? `插件 \`${id}\` 已收录，新版本发布后会自动同步，无需重复提交。`
@@ -227,7 +227,7 @@ async function checkSubmission(issue: Issue, policy: RegistryPolicy, workDir: st
   if (errors.length > 0 || !release.release || !release.check) return { errors, notes };
 
   const zipManifest = release.check.result.manifest;
-  const entry: RegistrySourceEntry = {
+  const entry: MarketSourceEntry = {
     id,
     repo: repo.full_name,
     repoId: repo.id,
@@ -261,28 +261,28 @@ function base64(text: string): string {
 async function openPullRequest(issue: Issue, check: Required<Pick<SubmissionCheck, "entry" | "preview">> & SubmissionCheck) {
   const entry = check.entry;
   const branch = `submission/${entry.id}`;
-  const owner = registryRepo.split("/")[0];
-  const open = await github<{ number: number }[]>(`/repos/${registryRepo}/pulls?state=open&head=${owner}:${branch}`);
+  const owner = marketRepo.split("/")[0];
+  const open = await github<{ number: number }[]>(`/repos/${marketRepo}/pulls?state=open&head=${owner}:${branch}`);
   if (open.length > 0) {
     await comment(issue.number, `插件 \`${entry.id}\` 已有审核中的 PR #${open[0].number}，请等待维护者处理。`);
     return;
   }
 
-  const base = await github<{ object: { sha: string } }>(`/repos/${registryRepo}/git/ref/heads/${baseBranch}`);
+  const base = await github<{ object: { sha: string } }>(`/repos/${marketRepo}/git/ref/heads/${baseBranch}`);
   try {
-    await github(`/repos/${registryRepo}/git/refs`, {
+    await github(`/repos/${marketRepo}/git/refs`, {
       method: "POST",
       body: { ref: `refs/heads/${branch}`, sha: base.object.sha }
     });
   } catch (error) {
     if (!(error instanceof GitHubError && error.status === 422)) throw error;
-    await github(`/repos/${registryRepo}/git/refs/heads/${branch}`, {
+    await github(`/repos/${marketRepo}/git/refs/heads/${branch}`, {
       method: "PATCH",
       body: { sha: base.object.sha, force: true }
     });
   }
 
-  const path = `registry/plugins/${entry.id}.json`;
+  const path = `market/plugins/${entry.id}.json`;
   const message = [
     `feat: 收录 ${entry.id} 插件`,
     "",
@@ -291,7 +291,7 @@ async function openPullRequest(issue: Issue, check: Required<Pick<SubmissionChec
     `Repo: ${entry.repo}`,
     `Repo-Id: ${entry.repoId}`
   ].join("\n");
-  const first = await github<{ content: { sha: string } }>(`/repos/${registryRepo}/contents/${path}`, {
+  const first = await github<{ content: { sha: string } }>(`/repos/${marketRepo}/contents/${path}`, {
     method: "PUT",
     body: { message, content: base64(formatEntry(entry)), branch }
   });
@@ -311,13 +311,13 @@ async function openPullRequest(issue: Issue, check: Required<Pick<SubmissionChec
     "",
     `Closes #${issue.number}`
   ].join("\n");
-  const pr = await github<{ number: number; html_url: string }>(`/repos/${registryRepo}/pulls`, {
+  const pr = await github<{ number: number; html_url: string }>(`/repos/${marketRepo}/pulls`, {
     method: "POST",
     body: { title: `feat: 收录 ${entry.id} 插件`, head: branch, base: baseBranch, body: prBody }
   });
 
   entry.review.pr = pr.number;
-  const second = await github<{ commit: { sha: string } }>(`/repos/${registryRepo}/contents/${path}`, {
+  const second = await github<{ commit: { sha: string } }>(`/repos/${marketRepo}/contents/${path}`, {
     method: "PUT",
     body: {
       message: `chore: 记录 ${entry.id} 的审核 PR #${pr.number}`,
@@ -326,16 +326,16 @@ async function openPullRequest(issue: Issue, check: Required<Pick<SubmissionChec
       sha: first.content.sha
     }
   });
-  await github(`/repos/${registryRepo}/statuses/${second.commit.sha}`, {
+  await github(`/repos/${marketRepo}/statuses/${second.commit.sha}`, {
     method: "POST",
-    body: { state: "success", context: "registry/validate", description: "Submission bot validated the release asset" }
+    body: { state: "success", context: "market/validate", description: "Submission bot validated the release asset" }
   });
   await addLabels(pr.number, ["submission"]);
   await addLabels(issue.number, ["pending"]);
   await comment(issue.number, `校验通过，已创建 PR #${pr.number}，等待维护者审核。合并后插件会在几分钟内出现在网站上。`);
 }
 
-async function handleSubmission(issue: Issue, policy: RegistryPolicy, trigger: "opened" | "edited" | "recheck", byMaintainer: boolean) {
+async function handleSubmission(issue: Issue, policy: MarketPolicy, trigger: "opened" | "edited" | "recheck", byMaintainer: boolean) {
   const labels = new Set(issue.labels.map((label) => label.name));
   if (labels.has("approved") || labels.has("spam")) return;
   if (trigger === "edited" && labels.has("pending")) return;
@@ -386,7 +386,7 @@ async function handleSubmission(issue: Issue, policy: RegistryPolicy, trigger: "
 }
 
 async function triggerBuild(issue: Issue): Promise<void> {
-  await github(`/repos/${registryRepo}/actions/workflows/build-registry.yml/dispatches`, {
+  await github(`/repos/${marketRepo}/actions/workflows/build-market.yml/dispatches`, {
     method: "POST",
     body: { ref: baseBranch }
   });
@@ -394,7 +394,7 @@ async function triggerBuild(issue: Issue): Promise<void> {
   try {
     await new Promise((resolve) => setTimeout(resolve, 2500));
     const runs = await github<{ workflow_runs: { html_url: string }[] }>(
-      `/repos/${registryRepo}/actions/workflows/build-registry.yml/runs?event=workflow_dispatch&per_page=1`
+      `/repos/${marketRepo}/actions/workflows/build-market.yml/runs?event=workflow_dispatch&per_page=1`
     );
     runUrl = runs.workflow_runs[0]?.html_url ?? "";
   } catch {
@@ -414,7 +414,7 @@ async function handleIssue(issue: Issue, trigger: "opened" | "edited" | "reopene
       `标题缺少 \`[submission]\` / \`[transfer]\` / \`[report]\` / \`[appeal]\` 前缀，已自动关闭。请通过${siteUrl ? `[插件仓库网站](${siteUrl}) 或` : ""} Issue 模板重新提交。`
     );
     await closeIssue(issue.number, "not_planned");
-    await github(`/repos/${registryRepo}/issues/${issue.number}/lock`, { method: "PUT", body: { lock_reason: "spam" } });
+    await github(`/repos/${marketRepo}/issues/${issue.number}/lock`, { method: "PUT", body: { lock_reason: "spam" } });
     return;
   }
 
@@ -431,7 +431,7 @@ async function handleIssue(issue: Issue, trigger: "opened" | "edited" | "reopene
 }
 
 async function handleClosedPullRequest(pr: PullRequest): Promise<void> {
-  if (pr.head.repo?.full_name !== registryRepo || !pr.head.ref.startsWith("submission/")) return;
+  if (pr.head.repo?.full_name !== marketRepo || !pr.head.ref.startsWith("submission/")) return;
   const issueMatch = /Closes #(\d+)/.exec(pr.body ?? "");
   if (issueMatch) {
     const issue = Number(issueMatch[1]);
@@ -446,11 +446,11 @@ async function handleClosedPullRequest(pr: PullRequest): Promise<void> {
       await closeIssue(issue, "not_planned");
     }
   }
-  await orNull(github(`/repos/${registryRepo}/git/refs/heads/${pr.head.ref}`, { method: "DELETE" })).catch(() => null);
+  await orNull(github(`/repos/${marketRepo}/git/refs/heads/${pr.head.ref}`, { method: "DELETE" })).catch(() => null);
 }
 
 async function main(): Promise<void> {
-  if (!registryRepo) throw new Error("GITHUB_REPOSITORY is required");
+  if (!marketRepo) throw new Error("GITHUB_REPOSITORY is required");
   const eventName = process.env.GITHUB_EVENT_NAME;
   const event = JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH ?? "", "utf-8"));
 

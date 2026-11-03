@@ -8,7 +8,7 @@ export async function getPlugins(): Promise<PluginEntry[]> {
   try {
     return JSON.parse(await readFile(pluginsFile, "utf-8")) as PluginEntry[];
   } catch (error) {
-    // `pnpm dev` / `pnpm build` 可在未运行 registry:build 时启动，此时目录为空
+    // `pnpm dev` / `pnpm build` 可在未运行 market:build 时启动，此时目录为空
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }

@@ -41,9 +41,9 @@ pnpm build          # 前端打包构建
 ```bash
 # Windows PowerShell
 $env:GITHUB_TOKEN = (gh auth token)
-$env:REGISTRY_DATA_DIR = "../plugin-data"
+$env:MARKET_DATA_DIR = "../plugin-data"
 $env:TEMPLATE_DIR = "../plugin-template"
-pnpm registry:build
+pnpm market:build
 ```
 
 ---
@@ -81,7 +81,7 @@ https://cnb.cool/OneDragon-Anyone/plugin-mirror/-/git/raw/main/covers/xxx.webp
 
 ### 数据仓侧配置
 
-`registry/policy.json` 增加 `mirror` 块：
+`market/policy.json` 增加 `mirror` 块：
 
 ```json
 "mirror": {
@@ -108,8 +108,8 @@ https://cnb.cool/OneDragon-Anyone/plugin-mirror/-/git/raw/main/covers/xxx.webp
 | 文件 | 职责 |
 |---|---|
 | `scripts/lib/cnb.ts` | CNB OpenAPI 客户端：查/建 release、建 tag、申请上传地址、PUT、确认、回读校验、清理旧附件；索引走 git 提交到仓库根目录 |
-| `scripts/build-registry.ts` | `publishMirror()` 新版本上传；`republishMirror()` 给缺镜像的旧版本补传 |
-| `src/lib/types.ts` | `RegistryPolicy.mirror`、`WarningCode.mirror_failed` |
+| `scripts/build-market.ts` | `publishMirror()` 新版本上传；`republishMirror()` 给缺镜像的旧版本补传 |
+| `src/lib/types.ts` | `MarketPolicy.mirror`、`WarningCode.mirror_failed` |
 
 ### 注意事项
 

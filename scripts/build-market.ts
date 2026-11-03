@@ -7,9 +7,9 @@ import type {
   PluginEntry,
   PluginRelease,
   PluginWarning,
-  RegistryIndex,
-  RegistryPolicy,
-  RegistrySourceEntry,
+  MarketIndex,
+  MarketPolicy,
+  MarketSourceEntry,
   RiskTag,
   SearchEntry,
   WarningCode
@@ -17,7 +17,7 @@ import type {
 import { type GhRelease, type GhRepo, github, githubText, listReleases, orNull, resolveTagCommit } from "./lib/github";
 import { renderSafeHtml } from "./lib/html";
 import { publishIndexFile, publishMirrorAsset, readMirrorTarget } from "./lib/cnb";
-import { checkEntries, readEntryFiles, readPolicy, rootDir } from "./lib/registry";
+import { checkEntries, readEntryFiles, readPolicy, rootDir } from "./lib/market";
 import { downloadAndValidate } from "./lib/validator";
 
 interface LockRelease {
@@ -72,7 +72,7 @@ async function writeJson(path: string, data: unknown): Promise<void> {
   await writeFile(path, `${JSON.stringify(data, null, 2)}\n`, "utf-8");
 }
 
-function freshLock(entry: RegistrySourceEntry): LockPlugin {
+function freshLock(entry: MarketSourceEntry): LockPlugin {
   return { repoId: entry.repoId, repo: entry.repo, maxVersionCode: 0, releases: {}, rejected: {} };
 }
 
@@ -90,10 +90,10 @@ async function previousEntry(id: string): Promise<PluginEntry | null> {
   }
 }
 
-async function openStaleIssue(entry: RegistrySourceEntry, days: number): Promise<number | undefined> {
-  const registryRepo = process.env.GITHUB_REPOSITORY;
-  if (!registryRepo || process.env.REGISTRY_OPEN_ISSUES !== "true") return undefined;
-  const issue = await github<{ number: number }>(`/repos/${registryRepo}/issues`, {
+async function openStaleIssue(entry: MarketSourceEntry, days: number): Promise<number | undefined> {
+  const marketRepo = process.env.GITHUB_REPOSITORY;
+  if (!marketRepo || process.env.MARKET_OPEN_ISSUES !== "true") return undefined;
+  const issue = await github<{ number: number }>(`/repos/${marketRepo}/issues`, {
     method: "POST",
     body: {
       title: `[stale] ${entry.id} 的仓库已连续 ${days} 天无法访问`,
@@ -106,13 +106,13 @@ async function openStaleIssue(entry: RegistrySourceEntry, days: number): Promise
 /** 镜像失败只会静默降级到 GitHub 原地址，开个 issue 提醒维护者。 */
 async function openMirrorIssue(): Promise<void> {
   if (mirrorFailures.length === 0) return;
-  const registryRepo = process.env.GITHUB_REPOSITORY;
+  const marketRepo = process.env.GITHUB_REPOSITORY;
   const detail = mirrorFailures.map((item) => `- \`${item.id}\` ${item.version}：${item.message}`);
-  const runUrl = `${process.env.GITHUB_SERVER_URL ?? "https://github.com"}/${registryRepo}/actions/runs/${process.env.GITHUB_RUN_ID ?? ""}`;
-  if (!registryRepo || process.env.REGISTRY_OPEN_ISSUES !== "true") return;
+  const runUrl = `${process.env.GITHUB_SERVER_URL ?? "https://github.com"}/${marketRepo}/actions/runs/${process.env.GITHUB_RUN_ID ?? ""}`;
+  if (!marketRepo || process.env.MARKET_OPEN_ISSUES !== "true") return;
   try {
     // 定时构建每小时一次，未关闭的同名 issue 存在时不再重复开
-    const query = encodeURIComponent(`repo:${registryRepo} is:issue is:open in:title "[mirror]"`);
+    const query = encodeURIComponent(`repo:${marketRepo} is:issue is:open in:title "[mirror]"`);
     const existing = await github<{ total_count: number }>(
       `https://api.github.com/search/issues?q=${query}`
     );
@@ -120,7 +120,7 @@ async function openMirrorIssue(): Promise<void> {
       report.push(`- ⚠️ 镜像失败 ${mirrorFailures.length} 个，已有未关闭的告警 issue`);
       return;
     }
-    const issue = await github<{ number: number }>(`/repos/${registryRepo}/issues`, {
+    const issue = await github<{ number: number }>(`/repos/${marketRepo}/issues`, {
       method: "POST",
       body: {
         title: "[mirror] 安装包镜像上传失败",
@@ -140,9 +140,9 @@ async function openMirrorIssue(): Promise<void> {
 }
 
 async function fallbackEntry(
-  entry: RegistrySourceEntry,
+  entry: MarketSourceEntry,
   lock: LockPlugin,
-  policy: RegistryPolicy,
+  policy: MarketPolicy,
   warning: PluginWarning
 ): Promise<PluginEntry | null> {
   lock.unreachableSince ??= now.toISOString();
@@ -170,7 +170,7 @@ async function publishMirror(
   versionCode: number,
   zipPath: string,
   sha256: string,
-  policy: RegistryPolicy,
+  policy: MarketPolicy,
   warnings: PluginWarning[]
 ): Promise<string | undefined> {
   const target = readMirrorTarget(policy);
@@ -195,12 +195,12 @@ async function publishMirror(
 }
 
 async function republishMirror(
-  entry: RegistrySourceEntry,
+  entry: MarketSourceEntry,
   tag: string,
   locked: LockRelease,
   asset: GhRelease["assets"][number],
   workDir: string,
-  policy: RegistryPolicy,
+  policy: MarketPolicy,
   warnings: PluginWarning[]
 ): Promise<string | undefined> {
   if (readMirrorTarget(policy) === null) return undefined;
@@ -217,11 +217,11 @@ async function republishMirror(
 }
 
 async function acceptNewReleases(
-  entry: RegistrySourceEntry,
+  entry: MarketSourceEntry,
   repo: GhRepo,
   releases: GhRelease[],
   lock: LockPlugin,
-  policy: RegistryPolicy,
+  policy: MarketPolicy,
   workDir: string,
   warnings: PluginWarning[]
 ): Promise<void> {
@@ -353,9 +353,9 @@ function toRelease(tag: string, locked: LockRelease, live: GhRelease, repo: GhRe
 }
 
 async function processPlugin(
-  entry: RegistrySourceEntry,
+  entry: MarketSourceEntry,
   lockFile: Lock,
-  policy: RegistryPolicy,
+  policy: MarketPolicy,
   workDir: string
 ): Promise<PluginEntry | null> {
   if (lockFile[entry.id]?.repoId !== entry.repoId) lockFile[entry.id] = freshLock(entry);
@@ -464,7 +464,7 @@ async function writeApi(plugins: PluginEntry[]): Promise<void> {
   await rm(apiDir, { recursive: true, force: true });
   await mkdir(join(apiDir, "plugins"), { recursive: true });
 
-  const index: RegistryIndex = {
+  const index: MarketIndex = {
     schemaVersion: 1,
     generatedAt: now.toISOString(),
     buildId: process.env.GITHUB_SHA ?? "local",
@@ -491,7 +491,7 @@ async function writeApi(plugins: PluginEntry[]): Promise<void> {
 }
 
 /** 把生成的 plugins.json 也发一份到镜像仓，客户端才能按下载源切换索引。 */
-async function publishIndexMirror(policy: RegistryPolicy): Promise<void> {
+async function publishIndexMirror(policy: MarketPolicy): Promise<void> {
   const target = readMirrorTarget(policy);
   if (target === null) return;
 
@@ -511,10 +511,10 @@ async function publishIndexMirror(policy: RegistryPolicy): Promise<void> {
 async function main(): Promise<void> {
   const policy = await readPolicy();
   const { entries, errors } = checkEntries(await readEntryFiles(), policy);
-  if (errors.length > 0) throw new Error(`registry entries are invalid:\n${errors.join("\n")}`);
+  if (errors.length > 0) throw new Error(`market entries are invalid:\n${errors.join("\n")}`);
 
   const lock = await readLock();
-  const workDir = await mkdtemp(join(tmpdir(), "zzzod-registry-"));
+  const workDir = await mkdtemp(join(tmpdir(), "zzzod-market-"));
   const plugins: PluginEntry[] = [];
   try {
     for (const entry of entries) {
@@ -539,7 +539,7 @@ async function main(): Promise<void> {
   await publishIndexMirror(policy);
   await writeJson(lockPath, lock);
 
-  const summary = [`## Registry build`, ``, `Published ${sorted.length} / ${entries.length} plugins.`, ``, ...report].join("\n");
+  const summary = [`## Market build`, ``, `Published ${sorted.length} / ${entries.length} plugins.`, ``, ...report].join("\n");
   console.log(summary);
   if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, `${summary}\n`);
 }

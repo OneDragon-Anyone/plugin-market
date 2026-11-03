@@ -185,7 +185,7 @@ export const FluentShell: React.FC<FluentShellProps> = ({
                       <span className="sidebar-label">收起导航</span>
                     </Button>
                   </Tooltip>
-                  <div className="sidebar-meta">Registry v1</div>
+                  <div className="sidebar-meta">Market v1</div>
                 </div>
               </aside>
   

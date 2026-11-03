@@ -7,9 +7,9 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "registry:build": "tsx scripts/build-registry.ts",
-    "registry:check": "tsx scripts/check-registry.ts",
-    "registry:bot": "tsx scripts/submission-bot.ts",
+    "market:build": "tsx scripts/build-market.ts",
+    "market:check": "tsx scripts/check-market.ts",
+    "market:bot": "tsx scripts/submission-bot.ts",
     "check": "tsc --noEmit"
   },
   "dependencies": {

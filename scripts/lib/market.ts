@@ -1,13 +1,13 @@
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { RISK_TAGS, type RegistryPolicy, type RegistrySourceEntry } from "../../src/lib/types";
+import { RISK_TAGS, type MarketPolicy, type MarketSourceEntry } from "../../src/lib/types";
 
 export const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-// 数据仓（registry/plugins、policy）与代码仓可以分离；本地开发时通过 REGISTRY_DATA_DIR 指向数据仓
-export const dataDir = resolve(process.env.REGISTRY_DATA_DIR ?? rootDir);
-export const pluginsDir = join(dataDir, "registry", "plugins");
-export const policyPath = join(dataDir, "registry", "policy.json");
+// 数据仓（market/plugins、policy）与代码仓可以分离；本地开发时通过 MARKET_DATA_DIR 指向数据仓
+export const dataDir = resolve(process.env.MARKET_DATA_DIR ?? rootDir);
+export const pluginsDir = join(dataDir, "market", "plugins");
+export const policyPath = join(dataDir, "market", "policy.json");
 
 export const ID_PATTERN = /^[a-z][a-z0-9_]*$/;
 export const TAG_PATTERN = /^[a-z0-9][a-z0-9-]{0,23}$/;
@@ -16,8 +16,8 @@ const STATUSES = new Set(["listed", "hidden", "deprecated", "suspended", "remove
 const ENTRY_KEYS = new Set(["id", "repo", "repoId", "tags", "extraRisk", "status", "pinned", "review"]);
 const REVIEW_KEYS = new Set(["issue", "pr", "submittedBy"]);
 
-export async function readPolicy(): Promise<RegistryPolicy> {
-  return JSON.parse(await readFile(policyPath, "utf-8")) as RegistryPolicy;
+export async function readPolicy(): Promise<MarketPolicy> {
+  return JSON.parse(await readFile(policyPath, "utf-8")) as MarketPolicy;
 }
 
 export async function readEntryFiles(): Promise<{ file: string; data: unknown }[]> {
@@ -31,7 +31,7 @@ function isPositiveInt(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
-export function checkEntry(data: unknown, file: string, policy: RegistryPolicy): string[] {
+export function checkEntry(data: unknown, file: string, policy: MarketPolicy): string[] {
   const errors: string[] = [];
   const fail = (message: string) => errors.push(`${file}: ${message}`);
   if (typeof data !== "object" || data === null || Array.isArray(data)) {
@@ -78,10 +78,10 @@ export function checkEntry(data: unknown, file: string, policy: RegistryPolicy):
 
 export function checkEntries(
   files: { file: string; data: unknown }[],
-  policy: RegistryPolicy
-): { entries: RegistrySourceEntry[]; errors: string[] } {
+  policy: MarketPolicy
+): { entries: MarketSourceEntry[]; errors: string[] } {
   const errors = files.flatMap(({ file, data }) => checkEntry(data, file, policy));
-  const entries = files.map(({ data }) => data as RegistrySourceEntry);
+  const entries = files.map(({ data }) => data as MarketSourceEntry);
   const seenRepoIds = new Map<number, string>();
   for (const entry of entries) {
     const other = seenRepoIds.get(entry.repoId);
@@ -91,7 +91,7 @@ export function checkEntries(
   return { entries, errors };
 }
 
-export function formatEntry(entry: RegistrySourceEntry): string {
+export function formatEntry(entry: MarketSourceEntry): string {
   const ordered = {
     id: entry.id,
     repo: entry.repo,

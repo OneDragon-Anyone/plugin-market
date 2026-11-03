@@ -1,4 +1,4 @@
-name: Reusable Validate Registry
+name: Reusable Validate Market
 
 on:
   workflow_call:
@@ -6,7 +6,7 @@ on:
 jobs:
   validate:
     # 名称即数据仓 ruleset 中的必需检查；机器人 PR 由提交机器人写入同名 commit status
-    name: registry/validate
+    name: market/validate
     runs-on: ubuntu-latest
     steps:
       # pull_request 事件下默认检出数据仓的 PR 合并提交
@@ -57,14 +57,14 @@ jobs:
         working-directory: .tools
         run: pnpm check
 
-      - name: Validate registry entries
+      - name: Validate market entries
         working-directory: .tools
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          REGISTRY_DATA_DIR: ${{ github.workspace }}
+          MARKET_DATA_DIR: ${{ github.workspace }}
           TEMPLATE_DIR: ${{ github.workspace }}/.plugin-template
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          changed=$(git -C "$GITHUB_WORKSPACE" diff --name-only --diff-filter=AM "$BASE_SHA" HEAD -- 'registry/plugins/*.json' \
+          changed=$(git -C "$GITHUB_WORKSPACE" diff --name-only --diff-filter=AM "$BASE_SHA" HEAD -- 'market/plugins/*.json' \
             | xargs -r -n1 basename | sed 's/\.json$//' | paste -sd, -)
-          pnpm registry:check --resolve --deep "$changed"
+          pnpm market:check --resolve --deep "$changed"

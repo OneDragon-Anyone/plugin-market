@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type GhRepo, github, orNull } from "./lib/github";
-import { checkEntries, readEntryFiles, readPolicy } from "./lib/registry";
+import { checkEntries, readEntryFiles, readPolicy } from "./lib/market";
 import { checkLatestRelease } from "./lib/validator";
 
 function option(name: string): string | undefined {

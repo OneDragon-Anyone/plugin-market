@@ -54,8 +54,8 @@ jobs:
         working-directory: .tools
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          REGISTRY_DATA_DIR: ${{ github.workspace }}
+          MARKET_DATA_DIR: ${{ github.workspace }}
           TEMPLATE_DIR: ${{ github.workspace }}/.plugin-template
-          REGISTRY_BASE_BRANCH: ${{ github.event.repository.default_branch }}
-          REGISTRY_SITE_URL: ${{ vars.SITE_URL || format('https://{0}.github.io', github.repository_owner) }}${{ env.BASE_PATH }}/
-        run: pnpm registry:bot
+          MARKET_BASE_BRANCH: ${{ github.event.repository.default_branch }}
+          MARKET_SITE_URL: ${{ vars.SITE_URL || format('https://{0}.github.io', github.repository_owner) }}${{ env.BASE_PATH }}/
+        run: pnpm market:bot
