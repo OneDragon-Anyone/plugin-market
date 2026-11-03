@@ -506,11 +506,26 @@ function splitStats(plugins: BuiltPlugin[]): { entries: PluginEntry[]; stats: Re
   return { entries, stats };
 }
 
+/** 把封面复制到索引目录 源文件缺失时清掉地址 免得索引里留下指向空文件的链接 */
+async function syncCovers(entries: PluginEntry[]): Promise<void> {
+  for (const plugin of entries) {
+    if (!plugin.cover) continue;
+    const source = join(lockCoversDir, basename(plugin.cover));
+    if (!existsSync(source)) {
+      plugin.cover = "";
+      continue;
+    }
+    await mkdir(join(apiDir, "covers"), { recursive: true });
+    await copyFile(source, join(apiDir, plugin.cover));
+  }
+}
+
 async function writeApi(plugins: BuiltPlugin[]): Promise<void> {
   await rm(apiDir, { recursive: true, force: true });
   await mkdir(join(apiDir, "plugins"), { recursive: true });
 
   const { entries, stats } = splitStats(plugins);
+  await syncCovers(entries);
 
   const index: MarketIndex = {
     schemaVersion: 1,
@@ -527,15 +542,6 @@ async function writeApi(plugins: BuiltPlugin[]): Promise<void> {
   );
   for (const plugin of entries) {
     await writeJson(join(apiDir, "plugins", `${plugin.id}.json`), plugin);
-    if (plugin.cover) {
-      const source = join(lockCoversDir, basename(plugin.cover));
-      if (existsSync(source)) {
-        await mkdir(join(apiDir, "covers"), { recursive: true });
-        await copyFile(source, join(apiDir, plugin.cover));
-      } else {
-        plugin.cover = "";
-      }
-    }
   }
 }
 
