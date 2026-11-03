@@ -119,9 +119,9 @@ https://cnb.cool/OneDragon-Anyone/plugin-mirror/-/git/raw/main/covers/xxx.webp
 
 数据仓 Settings → Secrets：
 
-- `CNB_TOKEN`：对 `plugin-mirror` 有写权限，用于提交索引与封面（`repo-code`）
-- `CNB_PYPI_TOKEN`：对 `plugin-mirror-release` 有上传与查询权限。上传安装包和读下载
-  统计都用它；未配置时回落到 `CNB_TOKEN`，但两者的权限范围通常不同，建议单独建
+- `CNB_TOKEN`：一个令牌同时用于上传安装包、读取下载量与提交索引封面。范围选到组织
+  （或同时包含 `plugin-mirror` 与 `plugin-mirror-release`），权限要同时有代码仓库写
+  和制品库读写。未配置时跳过镜像
 
 调用方 workflow 需带 `secrets: inherit` 才会传进 reusable 工作流。
 

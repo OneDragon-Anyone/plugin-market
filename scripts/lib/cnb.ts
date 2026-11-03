@@ -30,6 +30,7 @@ export interface MirrorTarget {
   registry: string;
   /** 制品库站点 形如 https://pypi.cnb.cool */
   registrySite: string;
+  /** 同一个令牌同时用于推送索引和上传安装包 需要两类权限都在 */
   token: string;
   api: string;
   branch: string;
@@ -91,7 +92,8 @@ export function readMirrorTarget(policy: MarketPolicy): MirrorTarget | null {
 
   const repo = envValue(process.env.CNB_MIRROR_REPO, mirror.repo);
   const registry = envValue(process.env.CNB_PYPI_REPO, mirror.pypi);
-  const token = envValue(process.env.CNB_PYPI_TOKEN, process.env.CNB_TOKEN);
+  // 一个令牌同时推索引和传安装包 所以它要同时有仓库代码与制品库两类权限
+  const token = envValue(process.env.CNB_TOKEN, process.env.CNB_PYPI_TOKEN);
   if (repo === "" || registry === "" || token === "") return null;
 
   const api = envValue(process.env.CNB_API_ENDPOINT, mirror.api, DEFAULT_API).replace(/\/+$/, "");
