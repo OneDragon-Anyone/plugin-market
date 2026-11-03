@@ -20,7 +20,7 @@ import {
   Open16Regular,
   PuzzlePiece24Regular
 } from "@fluentui/react-icons";
-import type { PluginEntry } from "@/lib/types";
+import type { MarketPlugin } from "@/lib/types";
 import {
   formatBytes,
   formatCount,
@@ -33,7 +33,7 @@ import { issueFormUrl } from "@/lib/site";
 import { withBase } from "@/lib/utils";
 
 interface PluginDetailProps {
-  plugin: PluginEntry;
+  plugin: MarketPlugin;
 }
 
 export const PluginDetail: React.FC<PluginDetailProps> = ({ plugin }) => {

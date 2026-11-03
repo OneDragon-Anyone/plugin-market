@@ -240,29 +240,9 @@ export async function publishMirrorAsset(
 }
 
 /**
- * 桌面端不读 stars / downloads，镜像前去掉。
- *
- * 这两个字段每次构建都会重新抓，留着会让索引内容随下载量漂移，每次构建都多一笔提交。
- * 解析失败时原样返回，宁可多提交一次也不破坏索引。
- */
-function stripStats(data: Buffer): Buffer {
-  try {
-    const list = JSON.parse(data.toString("utf-8")) as Record<string, unknown>[];
-    if (!Array.isArray(list)) return data;
-    for (const item of list) {
-      delete item.stars;
-      delete item.downloads;
-    }
-    return Buffer.from(`${JSON.stringify(list, null, 2)}\n`);
-  } catch {
-    return data;
-  }
-}
-
-/**
  * 把索引和封面作为普通文件提交到镜像仓，客户端用 raw 直链读取。
  *
- * 内容没变就不提交，避免定时构建把仓库历史堆满。
+ * 两个源的索引是同一份内容，内容没变就不提交，避免定时构建把仓库历史堆满。
  */
 export async function publishIndexFile(
   target: MirrorTarget,
@@ -275,7 +255,7 @@ export async function publishIndexFile(
   const authRemote = remote.replace("://", `://cnb:${encodeURIComponent(target.token)}@`);
   try {
     await runGit("git", ["clone", "-q", "--depth", "1", "--branch", target.branch, authRemote, dir]);
-    await writeFile(join(dir, INDEX_FILE), stripStats(data));
+    await writeFile(join(dir, INDEX_FILE), data);
     // 封面跟索引放同级，客户端按「索引目录 + cover」拼地址；只保留本次构建的封面，旧版本图不残留
     await rm(join(dir, "covers"), { recursive: true, force: true });
     if (existsSync(coversDir)) await cp(coversDir, join(dir, "covers"), { recursive: true });

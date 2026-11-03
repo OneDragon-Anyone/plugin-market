@@ -1,10 +1,10 @@
 import React from "react";
 import FluentShell from "@/components/fluent/FluentShell";
 import PluginExplorer from "@/components/fluent/PluginExplorer";
-import type { PluginEntry } from "@/lib/types";
+import type { MarketPlugin } from "@/lib/types";
 
 interface MarketAppProps {
-  plugins: PluginEntry[];
+  plugins: MarketPlugin[];
 }
 
 export const MarketApp: React.FC<MarketAppProps> = ({ plugins }) => (

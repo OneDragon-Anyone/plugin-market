@@ -16,13 +16,13 @@ import {
   PuzzlePiece24Regular,
   Add16Regular
 } from "@fluentui/react-icons";
-import type { PluginEntry } from "@/lib/types";
+import type { MarketPlugin } from "@/lib/types";
 import { formatCount, primaryRelease } from "@/lib/display";
 import { riskLabels } from "@/lib/risk";
 import { withBase } from "@/lib/utils";
 
 interface PluginExplorerProps {
-  plugins: PluginEntry[];
+  plugins: MarketPlugin[];
 }
 
 const sortOptions = [

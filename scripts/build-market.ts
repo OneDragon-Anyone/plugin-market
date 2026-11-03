@@ -6,6 +6,7 @@ import type {
   PluginCompatibility,
   PluginEntry,
   PluginRelease,
+  PluginStats,
   PluginWarning,
   MarketIndex,
   MarketPolicy,
@@ -54,6 +55,9 @@ interface LockPlugin {
 
 type Lock = Record<string, LockPlugin>;
 
+/** 构建过程中的条目 统计字段写盘时单独存进 stats.json */
+type BuiltPlugin = PluginEntry & PluginStats;
+
 const lockDir = resolve(process.env.LOCK_DIR ?? join(rootDir, ".lock"));
 const lockPath = join(lockDir, "sources.lock.json");
 const lockCoversDir = join(lockDir, "covers");
@@ -80,14 +84,46 @@ function publishedAt(release: GhRelease): string {
   return release.published_at ?? release.created_at;
 }
 
-async function previousEntry(id: string): Promise<PluginEntry | null> {
+let cachedPreviousStats: Record<string, PluginStats> | null = null;
+
+/** 上一次构建的统计值 读一次就缓存 还没有 stats.json 时按空表处理 */
+async function previousStats(): Promise<Record<string, PluginStats>> {
+  if (cachedPreviousStats !== null) return cachedPreviousStats;
+  let loaded: Record<string, PluginStats> = {};
+  if (previousApiUrl) {
+    try {
+      const response = await fetch(new URL("stats.json", previousApiUrl));
+      if (response.ok) loaded = ((await response.json()) as Record<string, PluginStats>) ?? {};
+    } catch {
+      // 读不到按空表处理 统计值退回上一次构建的记录
+    }
+  }
+  cachedPreviousStats = loaded;
+  return loaded;
+}
+
+/** 沿用上一次构建的统计值 免得同步失败的插件被清零 */
+async function previousStatsFor(id: string, known: Partial<PluginStats>): Promise<PluginStats> {
+  return (await previousStats())[id] ?? { stars: known.stars ?? 0, downloads: known.downloads ?? 0 };
+}
+
+/** 上一次构建写出的条目 统计字段由 stats.json 单独提供 */
+type PreviousEntry = PluginEntry & Partial<PluginStats>;
+
+async function previousEntry(id: string): Promise<PreviousEntry | null> {
   if (!previousApiUrl) return null;
   try {
     const response = await fetch(new URL(`plugins/${id}.json`, previousApiUrl));
-    return response.ok ? ((await response.json()) as PluginEntry) : null;
+    return response.ok ? ((await response.json()) as PreviousEntry) : null;
   } catch {
     return null;
   }
+}
+
+/** 整条沿用上一次构建的结果 统计值以 stats.json 为准 */
+async function carryOver(previous: PreviousEntry): Promise<BuiltPlugin> {
+  const { stars, downloads, ...entry } = previous;
+  return { ...entry, ...(await previousStatsFor(entry.id, { stars, downloads })) };
 }
 
 async function openStaleIssue(entry: MarketSourceEntry, days: number): Promise<number | undefined> {
@@ -144,7 +180,7 @@ async function fallbackEntry(
   lock: LockPlugin,
   policy: MarketPolicy,
   warning: PluginWarning
-): Promise<PluginEntry | null> {
+): Promise<BuiltPlugin | null> {
   lock.unreachableSince ??= now.toISOString();
   const days = (now.getTime() - new Date(lock.unreachableSince).getTime()) / 86_400_000;
   const stale = days >= policy.repoUnreachableDays;
@@ -154,7 +190,7 @@ async function fallbackEntry(
   const previous = await previousEntry(entry.id);
   if (!previous) return null;
   return {
-    ...previous,
+    ...(await carryOver(previous)),
     status: entry.status as PluginEntry["status"],
     pinned: entry.pinned ?? false,
     tags: entry.tags,
@@ -357,7 +393,7 @@ async function processPlugin(
   lockFile: Lock,
   policy: MarketPolicy,
   workDir: string
-): Promise<PluginEntry | null> {
+): Promise<BuiltPlugin | null> {
   if (lockFile[entry.id]?.repoId !== entry.repoId) lockFile[entry.id] = freshLock(entry);
   const lock = lockFile[entry.id];
 
@@ -440,7 +476,7 @@ async function processPlugin(
 
 const STATUS_RANK: Record<PluginEntry["status"], number> = { listed: 0, deprecated: 1, hidden: 2, suspended: 3 };
 
-function sortPlugins(plugins: PluginEntry[]): PluginEntry[] {
+function sortPlugins<T extends PluginEntry>(plugins: T[]): T[] {
   return plugins.sort((a, b) => {
     if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
     const statusDiff = STATUS_RANK[a.status] - STATUS_RANK[b.status];
@@ -460,23 +496,36 @@ function toSearchEntry(plugin: PluginEntry): SearchEntry {
   };
 }
 
-async function writeApi(plugins: PluginEntry[]): Promise<void> {
+/** 索引里不放每次构建都会变的统计字段 写盘前拆成两份 */
+function splitStats(plugins: BuiltPlugin[]): { entries: PluginEntry[]; stats: Record<string, PluginStats> } {
+  const stats: Record<string, PluginStats> = {};
+  const entries = plugins.map(({ stars, downloads, ...entry }) => {
+    stats[entry.id] = { stars, downloads };
+    return entry;
+  });
+  return { entries, stats };
+}
+
+async function writeApi(plugins: BuiltPlugin[]): Promise<void> {
   await rm(apiDir, { recursive: true, force: true });
   await mkdir(join(apiDir, "plugins"), { recursive: true });
+
+  const { entries, stats } = splitStats(plugins);
 
   const index: MarketIndex = {
     schemaVersion: 1,
     generatedAt: now.toISOString(),
     buildId: process.env.GITHUB_SHA ?? "local",
-    pluginCount: plugins.length
+    pluginCount: entries.length
   };
   await writeJson(join(apiDir, "index.json"), index);
-  await writeJson(join(apiDir, "plugins.json"), plugins);
+  await writeJson(join(apiDir, "stats.json"), stats);
+  await writeJson(join(apiDir, "plugins.json"), entries);
   await writeJson(
     join(apiDir, "search-index.json"),
-    plugins.filter((plugin) => plugin.status === "listed" || plugin.status === "deprecated").map(toSearchEntry)
+    entries.filter((plugin) => plugin.status === "listed" || plugin.status === "deprecated").map(toSearchEntry)
   );
-  for (const plugin of plugins) {
+  for (const plugin of entries) {
     await writeJson(join(apiDir, "plugins", `${plugin.id}.json`), plugin);
     if (plugin.cover) {
       const source = join(lockCoversDir, basename(plugin.cover));
@@ -515,7 +564,7 @@ async function main(): Promise<void> {
 
   const lock = await readLock();
   const workDir = await mkdtemp(join(tmpdir(), "zzzod-market-"));
-  const plugins: PluginEntry[] = [];
+  const plugins: BuiltPlugin[] = [];
   try {
     for (const entry of entries) {
       if (entry.status === "removed" || policy.bannedRepoIds.includes(entry.repoId)) continue;
@@ -526,7 +575,7 @@ async function main(): Promise<void> {
         const message = error instanceof Error ? error.message : String(error);
         report.push(`- ❌ \`${entry.id}\` sync failed: ${message}`);
         const previous = await previousEntry(entry.id);
-        if (previous) plugins.push(previous);
+        if (previous) plugins.push(await carryOver(previous));
       }
     }
   } finally {

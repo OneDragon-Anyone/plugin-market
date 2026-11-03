@@ -71,8 +71,6 @@ export interface PluginEntry {
   repoId: number;
   author: PluginAuthor;
   cover: string;
-  stars: number;
-  downloads: number;
   stale: boolean;
   readmeHtml: string;
   tags: string[];
@@ -94,6 +92,15 @@ export interface MarketIndex {
   buildId: string;
   pluginCount: number;
 }
+
+/** 每次构建都会变的统计值 单独托管 不混在插件元数据里 */
+export interface PluginStats {
+  stars: number;
+  downloads: number;
+}
+
+/** 网页展示用条目：索引本身不含统计字段 展示前由 stats.json 补齐 */
+export interface MarketPlugin extends PluginEntry, PluginStats {}
 
 export interface SearchEntry {
   id: string;

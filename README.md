@@ -67,8 +67,8 @@ pnpm market:build
 `downloadUrl` 回落 GitHub 原址。
 
 索引和封面也镜像一份到同一仓库的根目录（`plugins.json` 与 `covers/`），和读 GitHub Pages
-上的文件一样直接读它们。索引的镜像版会去掉 `stars` / `downloads` 两个统计字段——桌面客户端
-不读它们，留着会让内容随下载量漂移、每次构建都多一笔提交；去掉后只有插件元数据真变了才提交：
+上的文件一样直接读它们。两个源的索引内容一致——`stars` / `downloads` 不放进索引，单独托管在
+`/api/v1/stats.json`，这样每次构建都会变的统计值不会让索引跟着漂移：
 
 ```
 https://cnb.cool/OneDragon-Anyone/plugin-mirror/-/git/raw/main/plugins.json

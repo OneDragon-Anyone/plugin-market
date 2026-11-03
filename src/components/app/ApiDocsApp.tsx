@@ -18,6 +18,12 @@ const endpoints = [
     desc: "获取所有已上架插件的全量配置与最新发布版本信息。"
   },
   {
+    href: "/api/v1/stats.json",
+    method: "GET",
+    title: "/api/v1/stats.json",
+    desc: "各插件的 Stars 与下载量，与插件索引分开维护。"
+  },
+  {
     href: "/api/v1/search-index.json",
     method: "GET",
     title: "/api/v1/search-index.json",
