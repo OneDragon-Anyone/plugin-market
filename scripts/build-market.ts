@@ -17,7 +17,15 @@ import type {
 } from "../src/lib/types";
 import { type GhRelease, type GhRepo, github, githubText, listReleases, orNull, resolveTagCommit } from "./lib/github";
 import { renderSafeHtml } from "./lib/html";
-import { publishIndexFile, publishMirrorAsset, readMirrorTarget } from "./lib/cnb";
+import {
+  packageVersion,
+  publishIndexFile,
+  publishMirrorPackage,
+  readMirrorTarget,
+  readPackageDownloads,
+  readPackageFiles,
+  type PackageFile
+} from "./lib/cnb";
 import { checkEntries, readEntryFiles, readPolicy, rootDir } from "./lib/market";
 import { downloadAndValidate } from "./lib/validator";
 
@@ -51,6 +59,8 @@ interface LockPlugin {
   rejected: Record<string, LockRejection>;
   unreachableSince?: string;
   staleIssue?: number;
+  /** 上一次读到的制品库下载总量 读不到时沿用它免得数字回落 */
+  cnbDownloads?: number;
 }
 
 type Lock = Record<string, LockPlugin>;
@@ -62,7 +72,9 @@ const lockDir = resolve(process.env.LOCK_DIR ?? join(rootDir, ".lock"));
 const lockPath = join(lockDir, "sources.lock.json");
 const lockCoversDir = join(lockDir, "covers");
 const apiDir = join(rootDir, "public", "api", "v1");
-const previousApiUrl = process.env.PREVIOUS_API_URL ?? "";
+const previousApiBase = (process.env.PREVIOUS_API_URL ?? "").trim();
+/** 统一补上结尾斜杠 相对地址才能正确拼到上一版目录下 */
+const previousApiUrl = previousApiBase === "" ? "" : `${previousApiBase.replace(/\/+$/, "")}/`;
 const now = new Date();
 const report: string[] = [];
 const mirrorFailures: { id: string; version: string; message: string }[] = [];
@@ -213,10 +225,9 @@ async function publishMirror(
   if (target === null) return undefined;
 
   try {
-    const result = await publishMirrorAsset(target, id, versionCode, zipPath, sha256);
-    if (result.pruned > 0) report.push(`- 🧹 \`${id}\` 清理了 ${result.pruned} 个旧镜像附件`);
-    report.push(`- 🪞 \`${id}\` ${version} 已镜像到 ${target.repo}`);
-    return result.url;
+    const url = await publishMirrorPackage(target, id, version, versionCode, zipPath, sha256);
+    report.push(`- 🪞 \`${id}\` ${version} 已镜像到 ${target.registry}`);
+    return url;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     mirrorFailures.push({ id, version, message });
@@ -363,12 +374,31 @@ function assetIntact(locked: LockRelease, asset: GhRelease["assets"][number] | u
   return asset.digest ? asset.digest === `sha256:${locked.sha256}` : true;
 }
 
-function toRelease(tag: string, locked: LockRelease, live: GhRelease, repo: GhRepo): PluginRelease {
+/**
+ * 制品库里是否还留着这个版本。
+ *
+ * 保留多少个版本由制品库自己的清理策略决定 构建不复制这份判断；
+ * 读不到时按「还在」处理 一次接口抖动不该把整批镜像地址都撤掉。
+ */
+function mirroredIn(files: PackageFile[] | null, id: string, locked: LockRelease): boolean {
+  if (files === null) return true;
+  const name = `${id}-${packageVersion(locked.version, locked.versionCode)}.zip`;
+  return files.some((file) => file.name === name || file.sha256 === locked.sha256);
+}
+
+function toRelease(
+  id: string,
+  tag: string,
+  locked: LockRelease,
+  live: GhRelease,
+  repo: GhRepo,
+  files: PackageFile[] | null
+): PluginRelease {
   const asset = live.assets.find((item) => item.id === locked.assetId);
   const githubUrl =
     asset?.browser_download_url ??
     `https://github.com/${repo.full_name}/releases/download/${encodeURIComponent(tag)}/${locked.assetName}`;
-  const mirrorUrl = assetIntact(locked, asset) ? locked.mirrorUrl : undefined;
+  const mirrorUrl = assetIntact(locked, asset) && mirroredIn(files, id, locked) ? locked.mirrorUrl : undefined;
   const sources: Record<string, string> = { github: githubUrl };
   if (mirrorUrl !== undefined) sources.cnb = mirrorUrl;
   return {
@@ -386,6 +416,25 @@ function toRelease(tag: string, locked: LockRelease, live: GhRelease, repo: GhRe
     size: locked.size,
     sha256: locked.sha256
   };
+}
+
+/** 下载量按两个源合计 GitHub 已收录版本的附件下载 + 制品库的拉取总量 */
+async function countDownloads(
+  entry: MarketSourceEntry,
+  releases: GhRelease[],
+  lock: LockPlugin,
+  policy: MarketPolicy
+): Promise<number> {
+  const counted = new Set(Object.values(lock.releases).map((release) => release.assetId));
+  const github = releases
+    .flatMap((release) => release.assets)
+    .filter((asset) => counted.has(asset.id))
+    .reduce((total, asset) => total + asset.download_count, 0);
+
+  const target = readMirrorTarget(policy);
+  const pulled = target === null ? null : await readPackageDownloads(target, entry.id);
+  if (pulled !== null) lock.cnbDownloads = pulled;
+  return github + (pulled ?? lock.cnbDownloads ?? 0);
 }
 
 async function processPlugin(
@@ -420,10 +469,14 @@ async function processPlugin(
   const releases = await listReleases(repo.full_name);
   await acceptNewReleases(entry, repo, releases, lock, policy, workDir, warnings);
 
+  // 上传之后再看一遍制品库里实际还留着哪些版本 索引只给仍然存在的版本附镜像地址
+  const mirrorTarget = readMirrorTarget(policy);
+  const files = mirrorTarget === null ? null : await readPackageFiles(mirrorTarget, entry.id);
+
   const live = new Map(releases.map((release) => [release.tag_name, release]));
   const accepted = Object.entries(lock.releases)
     .filter(([tag]) => live.has(tag))
-    .map(([tag, locked]) => toRelease(tag, locked, live.get(tag)!, repo))
+    .map(([tag, locked]) => toRelease(entry.id, tag, locked, live.get(tag)!, repo, files))
     .sort((a, b) => b.versionCode - a.versionCode);
   if (accepted.length === 0) {
     report.push(`- ⏸️ \`${entry.id}\` has no accepted release yet, not published`);
@@ -441,8 +494,7 @@ async function processPlugin(
   const readme = await orNull(
     githubText(`/repos/${repo.full_name}/readme?ref=${primary.commit}`, "application/vnd.github.html+json")
   );
-  const downloads =
-    live.get(primary.tag)?.assets.find((asset) => asset.id === primaryLock.assetId)?.download_count ?? 0;
+  const downloads = await countDownloads(entry, releases, lock, policy);
 
   return {
     id: entry.id,
@@ -565,6 +617,10 @@ async function publishIndexMirror(policy: MarketPolicy): Promise<void> {
 
 async function main(): Promise<void> {
   const policy = await readPolicy();
+  // 策略里开着镜像但配置不全时 静默跳过会让人以为镜像是好的
+  if (policy.mirror?.enabled && readMirrorTarget(policy) === null) {
+    report.push("- ⚠️ mirror 已启用但 repo / pypi / token 配置不完整，本次跳过镜像");
+  }
   const { entries, errors } = checkEntries(await readEntryFiles(), policy);
   if (errors.length > 0) throw new Error(`market entries are invalid:\n${errors.join("\n")}`);
 

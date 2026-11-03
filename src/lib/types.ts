@@ -129,16 +129,14 @@ export interface MarketSourceEntry {
 export interface MarketMirrorPolicy {
   /** 是否启用国内下载源镜像 */
   enabled: boolean;
-  /** 镜像附件存放的仓库 格式 组织名称/仓库名称 */
+  /** 索引与封面同步到的仓库 格式 组织名称/仓库名称 */
   repo?: string;
+  /** 安装包存放的 PyPI 制品库 格式 组织名称/制品库名称 */
+  pypi?: string;
   /** CNB OpenAPI 地址 默认 https://api.cnb.cool */
   api?: string;
-  /** 创建 tag 时指向的分支 默认 main */
+  /** 索引同步时写入的分支 默认 main */
   branch?: string;
-  /** 镜像 tag 的前缀 默认直接以插件 id 作为 tag */
-  tagPrefix?: string;
-  /** 每个插件保留多少个历史版本的镜像 默认使用 keepReleases */
-  keepReleases?: number;
 }
 
 export interface MarketPolicy {

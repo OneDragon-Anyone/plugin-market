@@ -4,7 +4,10 @@ on:
   workflow_call:
     secrets:
       CNB_TOKEN:
-        description: CNB 访问令牌 用于把插件安装包镜像到国内下载源 未配置时跳过镜像
+        description: CNB 访问令牌 用于把索引与封面同步到国内镜像仓 未配置时跳过镜像
+        required: false
+      CNB_PYPI_TOKEN:
+        description: CNB 制品库令牌 用于上传安装包并读取下载量 未配置时回落到 CNB_TOKEN
         required: false
 
 env:
@@ -68,6 +71,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+          CNB_PYPI_TOKEN: ${{ secrets.CNB_PYPI_TOKEN }}
           MARKET_DATA_DIR: ${{ github.workspace }}
           LOCK_DIR: ${{ github.workspace }}/.lock
           TEMPLATE_DIR: ${{ github.workspace }}/.plugin-template
