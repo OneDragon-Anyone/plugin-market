@@ -21,7 +21,7 @@ const endpoints = [
     href: "/api/v1/stats.json",
     method: "GET",
     title: "/api/v1/stats.json",
-    desc: "各插件的 Stars 与下载量，与插件索引分开维护。"
+    desc: "各插件的 Stars 与下载量，与插件索引分开维护。下载量为 GitHub 与国内镜像源的合计。"
   },
   {
     href: "/api/v1/search-index.json",

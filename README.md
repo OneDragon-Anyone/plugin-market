@@ -50,13 +50,13 @@ pnpm market:build
 
 ## 插件包国内镜像（CNB）
 
-构建时可以把校验通过的插件 zip 原字节复制一份到 CNB 公开仓库，
+构建时把校验通过的插件 zip 原字节上传到 CNB 的公开 PyPI 制品库，
 并在 `plugins.json` 里同时给出各源地址：
 
 ```json
 "sources": {
   "github": "https://github.com/owner/repo/releases/download/v1/plugin.zip",
-  "cnb": "https://cnb.cool/OneDragon-Anyone/plugin-mirror/-/releases/download/v1/plugin.zip"
+  "cnb": "https://pypi.cnb.cool/OneDragon-Anyone/plugin-mirror-release/-/packages/packages/8b/15/…/plugin-1.0.0.zip"
 }
 ```
 
@@ -65,6 +65,24 @@ pnpm market:build
 
 镜像不可用时（上传失败、或原附件已被替换/删除）`sources` 不含 `cnb`，
 `downloadUrl` 回落 GitHub 原址。
+
+### 为什么放制品库而不是 release 附件
+
+release 附件不记录下载次数，制品库记录（`pull_count` / `recent_pull_count`）。
+安装包放在这里，市场页的下载量才能把国内源和 GitHub 两边的数合起来算。
+
+### 版本与保留
+
+包名用插件 id，版本号取 release tag 去掉前缀的 `v`。
+
+- 版本号必须符合 PEP 440：`1.0.0`、`1.2.0rc1` 可以，`1.0.0-beta.1` 不行。
+  不合规时退回用 `versionCode` 命名，镜像照常进行
+- 保留多少个版本由制品库自己的「版本清理策略」决定，构建不参与删除；
+  构建上传后会回读一遍库内文件，只给仍然存在的版本附镜像地址，
+  被清掉的版本自动回落到 GitHub 原址
+- 同版本重复上传是幂等的（制品库需开启「允许覆盖已有版本」），构建重跑不会堆积文件
+- 文件地址带内容摘要，构建时从 simple 索引读回真实地址并核对 sha256，
+  不一致直接抛错，不写入产物
 
 索引和封面也镜像一份到同一仓库的根目录（`plugins.json` 与 `covers/`），和读 GitHub Pages
 上的文件一样直接读它们。两个源的索引内容一致——`stars` / `downloads` 不放进索引，单独托管在
@@ -79,6 +97,9 @@ https://cnb.cool/OneDragon-Anyone/plugin-mirror/-/git/raw/main/covers/xxx.webp
 自动改走另一个。封面按各源索引所在的目录各拼一份，同样按这套候选顺序挑；镜像里只保留
 本次构建引用的封面，旧版本图不残留。
 
+`stats.json` 的 `downloads` 是两个源相加：GitHub 上已收录版本附件的下载数之和，
+加上制品库的 `pull_count`。制品库读不到时沿用锁文件里记的上一次的值，数字不会回落。
+
 ### 数据仓侧配置
 
 `market/policy.json` 增加 `mirror` 块：
@@ -87,8 +108,8 @@ https://cnb.cool/OneDragon-Anyone/plugin-mirror/-/git/raw/main/covers/xxx.webp
 "mirror": {
   "enabled": false,
   "repo": "OneDragon-Anyone/plugin-mirror",
-  "branch": "main",
-  "keepReleases": 10
+  "pypi": "OneDragon-Anyone/plugin-mirror-release",
+  "branch": "main"
 }
 ```
 
@@ -96,25 +117,29 @@ https://cnb.cool/OneDragon-Anyone/plugin-mirror/-/git/raw/main/covers/xxx.webp
 
 ### 密钥
 
-数据仓 Settings → Secrets 里加 `CNB_TOKEN`（对该镜像仓库有写权限：上传 release 附件
-走 `repo-release`，提交索引文件走 `repo-code`）。
+数据仓 Settings → Secrets：
+
+- `CNB_TOKEN`：对 `plugin-mirror` 有写权限，用于提交索引与封面（`repo-code`）
+- `CNB_PYPI_TOKEN`：对 `plugin-mirror-release` 有上传与查询权限。上传安装包和读下载
+  统计都用它；未配置时回落到 `CNB_TOKEN`，但两者的权限范围通常不同，建议单独建
+
 调用方 workflow 需带 `secrets: inherit` 才会传进 reusable 工作流。
 
-可选环境变量：`CNB_MIRROR_REPO`、`CNB_API_ENDPOINT`、`CNB_MIRROR_BRANCH`。
-仓库必须**公开**，否则用户匿名下载不了。
+可选环境变量：`CNB_MIRROR_REPO`、`CNB_PYPI_REPO`、`CNB_API_ENDPOINT`、`CNB_PYPI_ENDPOINT`、
+`CNB_MIRROR_BRANCH`。仓库与制品库都必须**公开**，否则用户匿名下载不了。
 
 ### 实现位置
 
 | 文件 | 职责 |
 |---|---|
-| `scripts/lib/cnb.ts` | CNB OpenAPI 客户端：查/建 release、建 tag、申请上传地址、PUT、确认、回读校验、清理旧附件；索引走 git 提交到仓库根目录 |
-| `scripts/build-market.ts` | `publishMirror()` 新版本上传；`republishMirror()` 给缺镜像的旧版本补传 |
+| `scripts/lib/cnb.ts` | 制品库客户端：multipart 上传、读 simple 索引取真实地址并核对 sha256、列库内文件、读下载总量；索引与封面走 git 提交到仓库根目录 |
+| `scripts/build-market.ts` | `publishMirror()` 新版本上传；`republishMirror()` 给缺镜像的旧版本补传；`countDownloads()` 合并两个源的下载量 |
 | `src/lib/types.ts` | `MarketPolicy.mirror`、`WarningCode.mirror_failed` |
 
 ### 注意事项
 
 - **必须原字节上传**：客户端强制核对 sha256，重新打包会导致安装被拒
-- 上传后回读一次 `hash_value` 比对，不一致直接抛错，不写入产物
+- 上传后从 simple 索引回读地址，`#sha256=` 里的摘要参与比对，不一致直接抛错
 - 幂等靠锁文件的 `mirrorUrl` 字段；单次上传失败只记 `mirror_failed` 告警，该版本
   回落到 GitHub 原址，下次构建自动补传
 
