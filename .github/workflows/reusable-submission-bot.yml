@@ -2,6 +2,17 @@ name: Reusable Submission Bot
 
 on:
   workflow_call:
+    inputs:
+      template_repository:
+        description: 模板仓的仓库坐标，不传时用 OneDragon-Anyone/plugin-template
+        type: string
+        required: false
+        default: OneDragon-Anyone/plugin-template
+      template_ref:
+        description: 模板仓的 tag，不传时用 v1
+        type: string
+        required: false
+        default: v1
 
 env:
   BASE_PATH: ${{ vars.SITE_BASE_PATH || '/plugin-data' }}
@@ -28,8 +39,8 @@ jobs:
       - name: Checkout template tools
         uses: actions/checkout@v6
         with:
-          repository: ${{ vars.TEMPLATE_REPOSITORY || 'OneDragon-Anyone/plugin-template' }}
-          ref: ${{ vars.TEMPLATE_REF || 'v1' }}
+          repository: ${{ inputs.template_repository }}
+          ref: ${{ inputs.template_ref }}
           path: .plugin-template
           persist-credentials: false
 
