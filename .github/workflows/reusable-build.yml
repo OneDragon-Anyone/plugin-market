@@ -81,8 +81,12 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
           MARKET_DATA_DIR: ${{ github.workspace }}
+          MARKET_SHA: ${{ job.workflow_sha }}
+          MARKET_REF: ${{ job.workflow_ref }}
           LOCK_DIR: ${{ github.workspace }}/.lock
           TEMPLATE_DIR: ${{ github.workspace }}/.plugin-template
+          TEMPLATE_REPOSITORY: ${{ inputs.template_repository }}
+          TEMPLATE_REF: ${{ inputs.template_ref }}
           PREVIOUS_API_URL: ${{ env.SITE_URL }}${{ env.BASE_PATH }}/api/v1/
           MARKET_OPEN_ISSUES: "true"
         run: pnpm market:build

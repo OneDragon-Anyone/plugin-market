@@ -1,7 +1,9 @@
+import { execFile } from "node:child_process";
 import { appendFile, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { promisify } from "node:util";
 import type {
   PluginCompatibility,
   PluginEntry,
@@ -75,6 +77,9 @@ const apiDir = join(rootDir, "public", "api", "v1");
 const previousApiBase = (process.env.PREVIOUS_API_URL ?? "").trim();
 /** 统一补上结尾斜杠 相对地址才能正确拼到上一版目录下 */
 const previousApiUrl = previousApiBase === "" ? "" : `${previousApiBase.replace(/\/+$/, "")}/`;
+/** 模板仓检出目录 与 validator 用的是同一个环境变量 */
+const templateDir = resolve(process.env.TEMPLATE_DIR ?? ".plugin-template");
+const runGit = promisify(execFile);
 const now = new Date();
 const report: string[] = [];
 const mirrorFailures: { id: string; version: string; message: string }[] = [];
@@ -615,6 +620,102 @@ async function publishIndexMirror(policy: MarketPolicy): Promise<void> {
   }
 }
 
+interface SourceVersion {
+  /** 仓库短名 三行 owner 都一样 不必重复 */
+  name: string;
+  /** 仓库坐标 owner/repo 用来拼链接 */
+  repo: string;
+  /** tag 或分支名 取不到就留空 */
+  version: string;
+  /** 提交 SHA */
+  sha: string;
+}
+
+/** 一次构建由数据 / 市场 / 模板三份代码共同决定 摘要里按调用链顺序列全 */
+async function sourceVersions(): Promise<string[]> {
+  const lines: string[] = [];
+
+  const data = dataVersion();
+  const market = marketVersion();
+  const templateRepo = (process.env.TEMPLATE_REPOSITORY ?? "").trim();
+  const template: SourceVersion = {
+    name: shortRepo(templateRepo) || "template",
+    repo: templateRepo,
+    version: (process.env.TEMPLATE_REF ?? "").trim(),
+    sha: await templateCommit()
+  };
+
+  for (const source of [data, market, template]) {
+    const line = sourceLine(source);
+    if (line !== "") lines.push(`- ${line}`);
+  }
+
+  return lines.length === 0 ? [] : ["**Built from**", "", ...lines];
+}
+
+/** 一行一项 形如 [`plugin-market@v1`](tag) ([`1f6da8b`](commit)) 点名和版本合成一个链接 */
+function sourceLine(source: SourceVersion): string {
+  // 本地直接跑脚本时这些环境变量都不存在 拼出来只会剩 data / market / template 三个空壳
+  if (source.repo === "") return "";
+  const base = repoPage(source.repo);
+  const commit = source.sha === "" ? "" : linked(source.sha.slice(0, 7), `${base}/commit/${source.sha}`);
+  const target = source.version === "" ? source.name : `${source.name}@${source.version}`;
+  const head = linked(target, source.version === "" ? base : `${base}/tree/${source.version}`);
+  return commit === "" ? head : `${head} (${commit})`;
+}
+
+/** 带代码样式的链接 */
+function linked(text: string, url: string): string {
+  return `[\`${text}\`](${url})`;
+}
+
+function repoPage(repo: string): string {
+  const server = (process.env.GITHUB_SERVER_URL ?? "https://github.com").replace(/\/+$/, "");
+  return `${server}/${repo}`;
+}
+
+/** owner/repo 只留 repo 省得三行都在重复同一个 owner */
+function shortRepo(repo: string): string {
+  return repo.split("/").filter(Boolean).pop() ?? "";
+}
+
+function shortRef(rawRef: string): string {
+  return rawRef.trim().replace(/^refs\/(tags|heads)\//, "");
+}
+
+/** 数据仓就是调用方 三个值都是 Actions 自带的环境变量 */
+function dataVersion(): SourceVersion {
+  const repo = (process.env.GITHUB_REPOSITORY ?? "").trim();
+  return {
+    name: shortRepo(repo) || "data",
+    repo,
+    version: shortRef(process.env.GITHUB_REF ?? ""),
+    sha: (process.env.GITHUB_SHA ?? "").trim()
+  };
+}
+
+/** 市场是 reusable workflow 自己 仓库和版本要从 workflow_ref 里拆 */
+function marketVersion(): SourceVersion {
+  const ref = (process.env.MARKET_REF ?? "").trim();
+  const sha = (process.env.MARKET_SHA ?? "").trim();
+  if (ref === "") return { name: "market", repo: "", version: "", sha };
+
+  // 形如 owner/repo/.github/workflows/x.yml@refs/tags/v1
+  const [path = "", rawRef = ""] = ref.split("@");
+  const repo = path.split("/.github/workflows/")[0] ?? "";
+  return { name: shortRepo(repo) || "market", repo, version: shortRef(rawRef), sha };
+}
+
+/** 模板仓当前检出的提交 拿不到就留空 不让摘要因此失败 */
+async function templateCommit(): Promise<string> {
+  try {
+    const { stdout } = await runGit("git", ["rev-parse", "HEAD"], { cwd: templateDir });
+    return stdout.trim();
+  } catch {
+    return "";
+  }
+}
+
 async function main(): Promise<void> {
   const policy = await readPolicy();
   // 策略里开着镜像但配置不全时 静默跳过会让人以为镜像是好的
@@ -650,7 +751,20 @@ async function main(): Promise<void> {
   await publishIndexMirror(policy);
   await writeJson(lockPath, lock);
 
-  const summary = [`## Market build`, ``, `Published ${sorted.length} / ${entries.length} plugins.`, ``, ...report].join("\n");
+  // 结果在前 版本信息垫底 免得每次都要先划过三行不变的内容
+  const body = [
+    `## Market build`,
+    ``,
+    `Published ${sorted.length} / ${entries.length} plugins.`,
+    ``,
+    ...report
+  ];
+  const sources = await sourceVersions();
+  if (sources.length > 0) {
+    if (body[body.length - 1] !== "") body.push("");
+    body.push(...sources);
+  }
+  const summary = body.join("\n");
   console.log(summary);
   if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, `${summary}\n`);
 }
