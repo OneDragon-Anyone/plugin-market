@@ -32,7 +32,8 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: OneDragon-Anyone/plugin-market
-          ref: v1
+          # 取当前 reusable workflow 所在提交，避免调用方改了版本号这里没跟上
+          ref: ${{ job.workflow_sha }}
           path: .tools
           persist-credentials: false
 
