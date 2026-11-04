@@ -1,10 +1,7 @@
 export const siteConfig = {
   name: "ZZZ OneDragon Plugin Market",
-  shortName: "ZZZOD Plugins",
   repoOwner: import.meta.env.PUBLIC_GITHUB_OWNER ?? "OneDragon-Anyone",
-  repoName: import.meta.env.PUBLIC_GITHUB_REPO ?? "plugin-data",
-  templateRepo: "OneDragon-Anyone/plugin-template",
-  basePath: import.meta.env.PUBLIC_BASE_PATH ?? "/plugin-data"
+  repoName: import.meta.env.PUBLIC_GITHUB_REPO ?? "plugin-data"
 };
 
 export type IssueTemplate = "1-submission.yml" | "2-transfer.yml" | "3-report.yml" | "4-appeal.yml";
