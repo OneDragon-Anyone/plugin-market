@@ -15,7 +15,7 @@ on:
         default: v1
     secrets:
       CNB_TOKEN:
-        description: CNB 访问令牌 用于上传安装包、读取下载量与同步索引封面 未配置时跳过镜像
+        description: CNB 访问令牌 提交索引与封面必需 未配置时跳过索引镜像
         required: false
 
 env:
