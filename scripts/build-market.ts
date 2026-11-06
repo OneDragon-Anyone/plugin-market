@@ -19,15 +19,7 @@ import type {
 } from "../src/lib/types";
 import { type GhRelease, type GhRepo, github, githubText, listReleases, orNull, resolveTagCommit } from "./lib/github";
 import { renderSafeHtml } from "./lib/html";
-import {
-  packageVersion,
-  publishIndexFile,
-  publishMirrorPackage,
-  readMirrorTarget,
-  readPackageDownloads,
-  readPackageFiles,
-  type PackageFile
-} from "./lib/cnb";
+import { publishIndexFile, readIndexTarget } from "./lib/cnb";
 import { checkEntries, readEntryFiles, readPolicy, rootDir } from "./lib/market";
 import { downloadAndValidate } from "./lib/validator";
 
@@ -39,8 +31,6 @@ interface LockRelease {
   assetName: string;
   size: number;
   sha256: string;
-  /** 国内下载源的镜像地址 缺失时对外回落到 GitHub 原地址 */
-  mirrorUrl?: string;
   verifiedAt: string;
   hasAppSetting: boolean;
   cover: string;
@@ -61,8 +51,6 @@ interface LockPlugin {
   rejected: Record<string, LockRejection>;
   unreachableSince?: string;
   staleIssue?: number;
-  /** 上一次读到的制品库下载总量 读不到时沿用它免得数字回落 */
-  cnbDownloads?: number;
 }
 
 type Lock = Record<string, LockPlugin>;
@@ -82,7 +70,6 @@ const templateDir = resolve(process.env.TEMPLATE_DIR ?? ".plugin-template");
 const runGit = promisify(execFile);
 const now = new Date();
 const report: string[] = [];
-const mirrorFailures: { id: string; version: string; message: string }[] = [];
 
 async function readLock(): Promise<Lock> {
   return existsSync(lockPath) ? (JSON.parse(await readFile(lockPath, "utf-8")) as Lock) : {};
@@ -137,10 +124,38 @@ async function previousEntry(id: string): Promise<PreviousEntry | null> {
   }
 }
 
-/** 整条沿用上一次构建的结果 统计值以 stats.json 为准 */
-async function carryOver(previous: PreviousEntry): Promise<BuiltPlugin> {
+/** 由仓库地址与 tag 拼 GitHub 下载地址 不依赖上一次索引里记的地址 */
+function githubAssetUrl(repoUrl: string, tag: string, assetName: string): string {
+  const full = repoUrl.replace(/^https?:\/\/github\.com\//, "").replace(/\/+$/, "");
+  return `https://github.com/${full}/releases/download/${encodeURIComponent(tag)}/${assetName}`;
+}
+
+/** 下载地址表：作者声明的镜像 + GitHub 原址 后者恒由构建填 */
+function mergeSources(declared: Record<string, string>, githubUrl: string): Record<string, string> {
+  return { ...declared, github: githubUrl };
+}
+
+/** 整条沿用上一次构建的结果：下载地址重排为「GitHub 原址 + 作者声明」，统计值以 stats.json 为准 */
+async function carryOver(
+  previous: PreviousEntry,
+  declared: Record<string, Record<string, string>>
+): Promise<BuiltPlugin> {
   const { stars, downloads, ...entry } = previous;
-  return { ...entry, ...(await previousStatsFor(entry.id, { stars, downloads })) };
+  const normalize = (release: PluginRelease): PluginRelease => {
+    const kept = release.sources?.github;
+    const githubUrl =
+      kept !== undefined && kept.startsWith("https://github.com/")
+        ? kept
+        : githubAssetUrl(entry.repo, release.tag, release.assetName);
+    return { ...release, downloadUrl: githubUrl, sources: mergeSources(declared[release.tag] ?? {}, githubUrl) };
+  };
+  return {
+    ...entry,
+    releases: (entry.releases ?? []).map(normalize),
+    latest: entry.latest ? normalize(entry.latest) : null,
+    latestBeta: entry.latestBeta ? normalize(entry.latestBeta) : null,
+    ...(await previousStatsFor(entry.id, { stars, downloads }))
+  };
 }
 
 async function openStaleIssue(entry: MarketSourceEntry, days: number): Promise<number | undefined> {
@@ -154,42 +169,6 @@ async function openStaleIssue(entry: MarketSourceEntry, days: number): Promise<n
     }
   });
   return issue.number;
-}
-
-/** 镜像失败只会静默降级到 GitHub 原地址，开个 issue 提醒维护者。 */
-async function openMirrorIssue(): Promise<void> {
-  if (mirrorFailures.length === 0) return;
-  const marketRepo = process.env.GITHUB_REPOSITORY;
-  const detail = mirrorFailures.map((item) => `- \`${item.id}\` ${item.version}：${item.message}`);
-  const runUrl = `${process.env.GITHUB_SERVER_URL ?? "https://github.com"}/${marketRepo}/actions/runs/${process.env.GITHUB_RUN_ID ?? ""}`;
-  if (!marketRepo || process.env.MARKET_OPEN_ISSUES !== "true") return;
-  try {
-    // 定时构建每小时一次，未关闭的同名 issue 存在时不再重复开
-    const query = encodeURIComponent(`repo:${marketRepo} is:issue is:open in:title "[mirror]"`);
-    const existing = await github<{ total_count: number }>(
-      `https://api.github.com/search/issues?q=${query}`
-    );
-    if (existing.total_count > 0) {
-      report.push(`- ⚠️ 镜像失败 ${mirrorFailures.length} 个，已有未关闭的告警 issue`);
-      return;
-    }
-    const issue = await github<{ number: number }>(`/repos/${marketRepo}/issues`, {
-      method: "POST",
-      body: {
-        title: "[mirror] 安装包镜像上传失败",
-        body: [
-          "以下插件包没能传到国内镜像，对应版本的下载会退回 GitHub 原地址：",
-          "",
-          ...detail,
-          "",
-          `构建记录：${runUrl}`
-        ].join("\n")
-      }
-    });
-    report.push(`- ⚠️ 镜像失败 ${mirrorFailures.length} 个，已开 issue #${issue.number}`);
-  } catch (error) {
-    report.push(`- ⚠️ 镜像失败 ${mirrorFailures.length} 个，开 issue 失败：${error instanceof Error ? error.message : String(error)}`);
-  }
 }
 
 async function fallbackEntry(
@@ -207,65 +186,14 @@ async function fallbackEntry(
   const previous = await previousEntry(entry.id);
   if (!previous) return null;
   return {
-    ...(await carryOver(previous)),
+    ...(await carryOver(previous, entry.sources ?? {})),
     status: entry.status as PluginEntry["status"],
     pinned: entry.pinned ?? false,
     tags: entry.tags,
-    risk: [...new Set([...previous.risk, ...(entry.extraRisk ?? [])])],
+    risk: [...new Set([...(previous.risk ?? []), ...(entry.extraRisk ?? [])])],
     stale,
     warnings: [warning]
   };
-}
-
-async function publishMirror(
-  id: string,
-  version: string,
-  versionCode: number,
-  zipPath: string,
-  sha256: string,
-  policy: MarketPolicy,
-  warnings: PluginWarning[]
-): Promise<string | undefined> {
-  const target = readMirrorTarget(policy);
-  if (target === null) return undefined;
-
-  try {
-    const url = await publishMirrorPackage(target, id, version, versionCode, zipPath, sha256);
-    report.push(`- 🪞 \`${id}\` ${version} 已镜像到 ${target.registry}`);
-    return url;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    mirrorFailures.push({ id, version, message });
-    warnings.push({
-      code: "mirror_failed",
-      message: `镜像到国内下载源失败，继续使用 GitHub 原地址：${message}`,
-      version
-    });
-    report.push(`- ⚠️ \`${id}\` ${version} 镜像失败: ${message}`);
-    return undefined;
-  }
-}
-
-async function republishMirror(
-  entry: MarketSourceEntry,
-  tag: string,
-  locked: LockRelease,
-  asset: GhRelease["assets"][number],
-  workDir: string,
-  policy: MarketPolicy,
-  warnings: PluginWarning[]
-): Promise<string | undefined> {
-  if (readMirrorTarget(policy) === null) return undefined;
-
-  const zipPath = join(workDir, `${entry.id}-${tag}-mirror.zip`);
-  const check = await downloadAndValidate(asset.browser_download_url, zipPath, {
-    expectId: entry.id,
-    expectTag: tag,
-    policy
-  });
-  if (!check.result.ok || check.sha256 !== locked.sha256) return undefined;
-
-  return await publishMirror(entry.id, locked.version, locked.versionCode, zipPath, check.sha256, policy, warnings);
 }
 
 async function acceptNewReleases(
@@ -295,9 +223,6 @@ async function acceptNewReleases(
         (asset.digest ? asset.digest !== `sha256:${locked.sha256}` : false);
       if (changed) {
         warnings.push({ code: "asset_changed", message: `${tag} 的 ${assetName} 在收录后被替换或删除，继续使用收录时的记录`, version });
-      }
-      if (locked.mirrorUrl === undefined && asset !== undefined) {
-        locked.mirrorUrl = await republishMirror(entry, tag, locked, asset, workDir, policy, warnings);
       }
       continue;
     }
@@ -344,8 +269,6 @@ async function acceptNewReleases(
       continue;
     }
 
-    const mirrorUrl = await publishMirror(entry.id, version, versionCode, zipPath, sha256, policy, warnings);
-
     let cover = "";
     if (result.coverFile) {
       cover = `${entry.id}-${versionCode}${basename(result.coverFile).slice(basename(coverStem).length)}`;
@@ -361,7 +284,6 @@ async function acceptNewReleases(
       assetName,
       size,
       sha256,
-      mirrorUrl,
       verifiedAt: now.toISOString(),
       hasAppSetting: result.hasAppSetting,
       cover,
@@ -373,39 +295,18 @@ async function acceptNewReleases(
   }
 }
 
-/** 收录时的附件是否仍原样存在，被替换或删除后不再使用镜像，避免继续下发旧包。 */
-function assetIntact(locked: LockRelease, asset: GhRelease["assets"][number] | undefined): boolean {
-  if (asset === undefined || asset.id !== locked.assetId || asset.size !== locked.size) return false;
-  return asset.digest ? asset.digest === `sha256:${locked.sha256}` : true;
-}
-
-/**
- * 制品库里是否还留着这个版本。
- *
- * 保留多少个版本由制品库自己的清理策略决定 构建不复制这份判断；
- * 读不到时按「还在」处理 一次接口抖动不该把整批镜像地址都撤掉。
- */
-function mirroredIn(files: PackageFile[] | null, id: string, locked: LockRelease): boolean {
-  if (files === null) return true;
-  const name = `${id}-${packageVersion(locked.version, locked.versionCode)}.zip`;
-  return files.some((file) => file.name === name || file.sha256 === locked.sha256);
-}
-
+/** 索引里每个版本给出的下载地址：GitHub 原址打底 再并上作者声明的镜像 */
 function toRelease(
-  id: string,
   tag: string,
   locked: LockRelease,
   live: GhRelease,
   repo: GhRepo,
-  files: PackageFile[] | null
+  declared: Record<string, string>
 ): PluginRelease {
   const asset = live.assets.find((item) => item.id === locked.assetId);
   const githubUrl =
     asset?.browser_download_url ??
     `https://github.com/${repo.full_name}/releases/download/${encodeURIComponent(tag)}/${locked.assetName}`;
-  const mirrorUrl = assetIntact(locked, asset) && mirroredIn(files, id, locked) ? locked.mirrorUrl : undefined;
-  const sources: Record<string, string> = { github: githubUrl };
-  if (mirrorUrl !== undefined) sources.cnb = mirrorUrl;
   return {
     version: locked.version,
     versionCode: locked.versionCode,
@@ -415,31 +316,21 @@ function toRelease(
     immutable: live.immutable ?? false,
     publishedAt: publishedAt(live),
     changelogHtml: renderSafeHtml(live.body_html, repo.full_name, locked.commit),
-    downloadUrl: mirrorUrl ?? githubUrl,
-    sources,
+    downloadUrl: githubUrl,
+    sources: mergeSources(declared, githubUrl),
     assetName: locked.assetName,
     size: locked.size,
     sha256: locked.sha256
   };
 }
 
-/** 下载量按两个源合计 GitHub 已收录版本的附件下载 + 制品库的拉取总量 */
-async function countDownloads(
-  entry: MarketSourceEntry,
-  releases: GhRelease[],
-  lock: LockPlugin,
-  policy: MarketPolicy
-): Promise<number> {
+/** 已收录版本的 GitHub 附件下载量 */
+function countDownloads(releases: GhRelease[], lock: LockPlugin): number {
   const counted = new Set(Object.values(lock.releases).map((release) => release.assetId));
-  const github = releases
+  return releases
     .flatMap((release) => release.assets)
     .filter((asset) => counted.has(asset.id))
     .reduce((total, asset) => total + asset.download_count, 0);
-
-  const target = readMirrorTarget(policy);
-  const pulled = target === null ? null : await readPackageDownloads(target, entry.id);
-  if (pulled !== null) lock.cnbDownloads = pulled;
-  return github + (pulled ?? lock.cnbDownloads ?? 0);
 }
 
 async function processPlugin(
@@ -474,18 +365,20 @@ async function processPlugin(
   const releases = await listReleases(repo.full_name);
   await acceptNewReleases(entry, repo, releases, lock, policy, workDir, warnings);
 
-  // 上传之后再看一遍制品库里实际还留着哪些版本 索引只给仍然存在的版本附镜像地址
-  const mirrorTarget = readMirrorTarget(policy);
-  const files = mirrorTarget === null ? null : await readPackageFiles(mirrorTarget, entry.id);
-
   const live = new Map(releases.map((release) => [release.tag_name, release]));
+  const declared = entry.sources ?? {};
   const accepted = Object.entries(lock.releases)
     .filter(([tag]) => live.has(tag))
-    .map(([tag, locked]) => toRelease(entry.id, tag, locked, live.get(tag)!, repo, files))
+    .map(([tag, locked]) => toRelease(tag, locked, live.get(tag)!, repo, declared[tag] ?? {}))
     .sort((a, b) => b.versionCode - a.versionCode);
   if (accepted.length === 0) {
     report.push(`- ⏸️ \`${entry.id}\` has no accepted release yet, not published`);
     return null;
+  }
+  for (const tag of Object.keys(declared)) {
+    if (!accepted.some((release) => release.tag === tag)) {
+      report.push(`- ⚠️ \`${entry.id}\` sources 里的 ${tag} 没有对应版本，已忽略`);
+    }
   }
 
   const latest = accepted.find((release) => !release.prerelease) ?? null;
@@ -499,7 +392,7 @@ async function processPlugin(
   const readme = await orNull(
     githubText(`/repos/${repo.full_name}/readme?ref=${primary.commit}`, "application/vnd.github.html+json")
   );
-  const downloads = await countDownloads(entry, releases, lock, policy);
+  const downloads = countDownloads(releases, lock);
 
   return {
     id: entry.id,
@@ -602,9 +495,9 @@ async function writeApi(plugins: BuiltPlugin[]): Promise<void> {
   }
 }
 
-/** 把生成的 plugins.json 也发一份到镜像仓，客户端才能按下载源切换索引。 */
+/** 把 plugins.json 与封面同步到镜像仓，客户端才能按下载源切换索引。 */
 async function publishIndexMirror(policy: MarketPolicy): Promise<void> {
-  const target = readMirrorTarget(policy);
+  const target = readIndexTarget(policy);
   if (target === null) return;
 
   try {
@@ -718,9 +611,13 @@ async function templateCommit(): Promise<string> {
 
 async function main(): Promise<void> {
   const policy = await readPolicy();
-  // 策略里开着镜像但配置不全时 静默跳过会让人以为镜像是好的
-  if (policy.mirror?.enabled && readMirrorTarget(policy) === null) {
-    report.push("- ⚠️ mirror 已启用但 repo / pypi / token 配置不完整，本次跳过镜像");
+  // 配了索引镜像但凭证不全时 静默跳过会让人以为镜像在工作；主动关闭的不报
+  if (
+    policy.mirror?.enabled !== false &&
+    policy.mirror?.index !== undefined &&
+    readIndexTarget(policy) === null
+  ) {
+    report.push("- ⚠️ 已配置索引镜像但 repo / token 不完整，本次跳过");
   }
   const { entries, errors } = checkEntries(await readEntryFiles(), policy);
   if (errors.length > 0) throw new Error(`market entries are invalid:\n${errors.join("\n")}`);
@@ -738,7 +635,7 @@ async function main(): Promise<void> {
         const message = error instanceof Error ? error.message : String(error);
         report.push(`- ❌ \`${entry.id}\` sync failed: ${message}`);
         const previous = await previousEntry(entry.id);
-        if (previous) plugins.push(await carryOver(previous));
+        if (previous) plugins.push(await carryOver(previous, entry.sources ?? {}));
       }
     }
   } finally {
@@ -746,7 +643,6 @@ async function main(): Promise<void> {
   }
 
   const sorted = sortPlugins(plugins);
-  await openMirrorIssue();
   await writeApi(sorted);
   await publishIndexMirror(policy);
   await writeJson(lockPath, lock);
