@@ -60,9 +60,6 @@ importers:
       '@types/sanitize-html':
         specifier: ^2.16.2
         version: 2.16.2
-      blakejs:
-        specifier: ^1.2.1
-        version: 1.2.1
       tsx:
         specifier: ^4.19.2
         version: 4.22.3
@@ -1792,9 +1789,6 @@ packages:
   binary-extensions@2.3.0:
     resolution: {integrity: sha512-Ceh+7ox5qe7LJuLHoY0feh3pHuUDHAcRUeyL2VYghZwfpkNIy/+8Ocg0a3UuSoYzavmylwuLWQOf3hl0jjMMIw==}
     engines: {node: '>=8'}
-
-  blakejs@1.2.1:
-    resolution: {integrity: sha512-QXUSXI3QVc/gJME0dBpXrag1kbzOqCjCX8/b54ntNyW6sjtoqxqRk3LTmXzaJoh71zMsDCjM+47jS7XiwN/+fQ==}
 
   boolbase@1.0.0:
     resolution: {integrity: sha512-JZOSA7Mo9sNGB8+UjSgzdLtokWAky1zbztM3WRLCbZ70/3cTANmQmOdR7y2g+J0e2WXywy1yS468tY+IruqEww==}
@@ -5272,8 +5266,6 @@ snapshots:
   baseline-browser-mapping@2.10.31: {}
 
   binary-extensions@2.3.0: {}
-
-  blakejs@1.2.1: {}
 
   boolbase@1.0.0: {}
 
