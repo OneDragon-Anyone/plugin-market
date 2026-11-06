@@ -20,8 +20,7 @@ export type WarningCode =
   | "missing_asset"
   | "invalid_package"
   | "repo_identity_changed"
-  | "repo_unreachable"
-  | "mirror_failed";
+  | "repo_unreachable";
 
 export interface PluginWarning {
   code: WarningCode;
@@ -44,7 +43,7 @@ export interface PluginRelease {
   publishedAt: string;
   changelogHtml: string;
   downloadUrl: string;
-  /** 每个下载源各一份地址，键与资源下载源 ID 一致（github / cnb）。 */
+  /** 每个下载源各一份地址，键与客户端资源下载源 ID 一致；github 恒为作者仓库原址。 */
   sources?: Record<string, string>;
   assetName: string;
   size: number;
@@ -119,6 +118,13 @@ export interface MarketSourceEntry {
   extraRisk?: RiskTag[];
   status: MarketStatus;
   pinned?: boolean;
+  /**
+   * 作者自建的镜像地址 按 release tag 分组 每个版本各写各的。
+   *
+   * 内层键用下载源 ID（github / cnb / gitee 会按下载源顺序参与排序，自定义键只能兜底），
+   * 值是该版本在该源上的地址。`github` 由构建填，不能在这里覆盖。
+   */
+  sources?: Record<string, Record<string, string>>;
   review: {
     issue?: number;
     pr?: number;
@@ -126,17 +132,26 @@ export interface MarketSourceEntry {
   };
 }
 
-export interface MarketMirrorPolicy {
-  /** 是否启用国内下载源镜像 */
-  enabled: boolean;
-  /** 索引与封面同步到的仓库 格式 组织名称/仓库名称 */
+/** 索引与封面的镜像目标 */
+export interface MarketIndexMirror {
+  /** 同步到的仓库 格式 组织名称/仓库名称 */
   repo?: string;
-  /** 安装包存放的 PyPI 制品库 格式 组织名称/制品库名称 */
-  pypi?: string;
+  /** 提交到的分支 默认 main */
+  branch?: string;
+}
+
+/**
+ * 镜像配置：市场只镜像自己产出的索引与封面。
+ *
+ * 未配置时索引只发布在 GitHub Pages；插件包始终由作者仓库分发，不经过市场。
+ */
+export interface MarketMirrorPolicy {
+  /** 镜像开关：写 false 时整段跳过，不配置视为开启 */
+  enabled?: boolean;
   /** CNB OpenAPI 地址 默认 https://api.cnb.cool */
   api?: string;
-  /** 索引同步时写入的分支 默认 main */
-  branch?: string;
+  /** 索引与封面镜像 */
+  index?: MarketIndexMirror;
 }
 
 export interface MarketPolicy {
@@ -151,6 +166,6 @@ export interface MarketPolicy {
     maxOpenSubmissionsPerUser: number;
     windowHours: number;
   };
-  /** 国内下载源镜像配置 未配置或关闭时行为与改造前一致 */
+  /** 镜像配置 未配置时不做镜像 */
   mirror?: MarketMirrorPolicy;
 }

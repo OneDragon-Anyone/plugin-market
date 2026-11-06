@@ -13,7 +13,9 @@ export const ID_PATTERN = /^[a-z][a-z0-9_]*$/;
 export const TAG_PATTERN = /^[a-z0-9][a-z0-9-]{0,23}$/;
 export const MAX_TAGS = 8;
 const STATUSES = new Set(["listed", "hidden", "deprecated", "suspended", "removed"]);
-const ENTRY_KEYS = new Set(["id", "repo", "repoId", "tags", "extraRisk", "status", "pinned", "review"]);
+const ENTRY_KEYS = new Set(["id", "repo", "repoId", "tags", "extraRisk", "status", "pinned", "sources", "review"]);
+const SOURCE_KEY = /^[a-z][a-z0-9_-]{0,23}$/;
+const RELEASE_TAG = /^v[A-Za-z0-9._-]{1,63}$/;
 const REVIEW_KEYS = new Set(["issue", "pr", "submittedBy"]);
 
 export async function readPolicy(): Promise<MarketPolicy> {
@@ -64,6 +66,27 @@ export function checkEntry(data: unknown, file: string, policy: MarketPolicy): s
   }
   if (typeof entry.status !== "string" || !STATUSES.has(entry.status)) fail("invalid status");
   if (entry.pinned !== undefined && typeof entry.pinned !== "boolean") fail("pinned must be boolean");
+  if (entry.sources !== undefined) {
+    const sources = entry.sources as Record<string, unknown>;
+    if (typeof sources !== "object" || sources === null || Array.isArray(sources)) fail("sources must be an object");
+    else {
+      for (const [tag, mirrors] of Object.entries(sources)) {
+        if (!RELEASE_TAG.test(tag)) {
+          fail(`sources.${tag} must be a release tag`);
+          continue;
+        }
+        if (typeof mirrors !== "object" || mirrors === null || Array.isArray(mirrors)) {
+          fail(`sources.${tag} must be an object`);
+          continue;
+        }
+        for (const [key, url] of Object.entries(mirrors as Record<string, unknown>)) {
+          if (key === "github") fail(`sources.${tag} cannot override "github"`);
+          else if (!SOURCE_KEY.test(key)) fail(`sources.${tag}.${key} must match ${SOURCE_KEY}`);
+          if (typeof url !== "string" || !/^https:\/\//.test(url)) fail(`sources.${tag}.${key} must be an https URL`);
+        }
+      }
+    }
+  }
 
   const review = entry.review as Record<string, unknown> | undefined;
   if (typeof review !== "object" || review === null) fail("review is required");
@@ -100,6 +123,7 @@ export function formatEntry(entry: MarketSourceEntry): string {
     extraRisk: entry.extraRisk ?? [],
     status: entry.status,
     pinned: entry.pinned ?? false,
+    ...(entry.sources ? { sources: entry.sources } : {}),
     review: {
       ...(entry.review.issue ? { issue: entry.review.issue } : {}),
       ...(entry.review.pr ? { pr: entry.review.pr } : {}),
