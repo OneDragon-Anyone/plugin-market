@@ -1,6 +1,6 @@
 # ZZZOD 插件市场仓
 
-自动审核插件提交、定时构建索引、渲染市场网页，并把索引与封面镜像到国内可直读的仓库。
+自动审核插件提交、定时构建索引、渲染市场网页，并把索引与封面另发一份到 CNB。
 
 - 🌐 **在线插件市场**：[https://onedragon-anyone.github.io/plugin-data/](https://onedragon-anyone.github.io/plugin-data/)
 - 📦 **配套数据仓**：[OneDragon-Anyone/plugin-data](https://github.com/OneDragon-Anyone/plugin-data)（存放插件收录配置与索引）
@@ -46,14 +46,15 @@ $env:TEMPLATE_DIR = "../plugin-template"
 pnpm market:build
 ```
 
-产物写入站点目录下的 `public/api/`（索引、统计与封面），该目录由构建生成、不入库。
+产物写入站点目录下的 `public/api/`（索引、统计与封面，按 API 版本分子目录），该目录由构建生成、不入库。
 
 ---
 
 ## 版本与引用规范
 
-- 数据仓引用本仓库的可复用工作流时用主版本标签，标签内容随 `master` 前移，消费者无需改动引用。
-- 工作流内部 `Checkout tools` 的 `ref` 用同一个标签，保证工具代码与工作流文件来自同一个提交。
+- 数据仓引用本仓的可复用工作流时用主版本标签，标签随 `master` 前移，消费者不用改引用。
+- 工作流里检出本仓代码用调用方 workflow 所在的提交（`job.workflow_sha`），工具代码与工作流文件不会错位。
+- 模板仓坐标与 tag 是工作流的输入参数（`template_repository` / `template_ref`），由调用方传，本仓不写死。
 
 ---
 
