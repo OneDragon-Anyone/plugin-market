@@ -1,6 +1,6 @@
 # ZZZOD 插件市场仓
 
-自动审核插件提交、定时构建索引、渲染市场网页，并把安装包镜像到国内下载源。
+自动审核插件提交、定时构建索引、渲染市场网页，并把索引与封面镜像到国内可直读的仓库。
 
 - 🌐 **在线插件市场**：[https://onedragon-anyone.github.io/plugin-data/](https://onedragon-anyone.github.io/plugin-data/)
 - 📦 **配套数据仓**：[OneDragon-Anyone/plugin-data](https://github.com/OneDragon-Anyone/plugin-data)（存放插件收录配置与索引）
@@ -46,108 +46,36 @@ $env:TEMPLATE_DIR = "../plugin-template"
 pnpm market:build
 ```
 
----
-
-## 插件包国内镜像（CNB）
-
-构建时把校验通过的插件 zip 原字节上传到 CNB 的公开 PyPI 制品库，
-并在 `plugins.json` 里同时给出各源地址：
-
-```json
-"sources": {
-  "github": "https://github.com/owner/repo/releases/download/v1/plugin.zip",
-  "cnb": "https://pypi.cnb.cool/OneDragon-Anyone/plugin-mirror-release/-/packages/packages/8b/15/…/plugin-1.0.0.zip"
-}
-```
-
-客户端按「资源」页选择的下载源顺序挑选，与代码同步、资源下载共用同一套候选顺序；
-索引里没有的源会被跳过。`downloadUrl` 保留给网页与旧客户端，仍优先给 CNB 地址。
-
-镜像不可用时（上传失败、或原附件已被替换/删除）`sources` 不含 `cnb`，
-`downloadUrl` 回落 GitHub 原址。
-
-### 为什么放制品库而不是 release 附件
-
-release 附件不记录下载次数，制品库记录（`pull_count` / `recent_pull_count`）。
-安装包放在这里，市场页的下载量才能把国内源和 GitHub 两边的数合起来算。
-
-### 版本与保留
-
-包名用插件 id，版本号取 release tag 去掉前缀的 `v`。
-
-- 版本号必须符合 PEP 440：`1.0.0`、`1.2.0rc1` 可以，`1.0.0-beta.1` 不行。
-  不合规时退回用 `versionCode` 命名，镜像照常进行
-- 保留多少个版本由制品库自己的「版本清理策略」决定，构建不参与删除；
-  构建上传后会回读一遍库内文件，只给仍然存在的版本附镜像地址，
-  被清掉的版本自动回落到 GitHub 原址
-- 同版本重复上传是幂等的（制品库需开启「允许覆盖已有版本」），构建重跑不会堆积文件
-- 文件地址带内容摘要，构建时从 simple 索引读回真实地址并核对 sha256，
-  不一致直接抛错，不写入产物
-
-索引和封面也镜像一份到同一仓库的根目录（`plugins.json` 与 `covers/`），和读 GitHub Pages
-上的文件一样直接读它们。两个源的索引内容一致——`stars` / `downloads` 不放进索引，单独托管在
-`/api/v1/stats.json`，这样每次构建都会变的统计值不会让索引跟着漂移：
-
-```
-https://cnb.cool/OneDragon-Anyone/plugin-mirror/-/git/raw/main/plugins.json
-https://cnb.cool/OneDragon-Anyone/plugin-mirror/-/git/raw/main/covers/xxx.webp
-```
-
-客户端按「资源」页选择的下载源顺序取索引（CNB 优先或 Pages 优先），其中一源不可用时
-自动改走另一个。封面按各源索引所在的目录各拼一份，同样按这套候选顺序挑；镜像里只保留
-本次构建引用的封面，旧版本图不残留。
-
-`stats.json` 的 `downloads` 是两个源相加：GitHub 上已收录版本附件的下载数之和，
-加上制品库的 `pull_count`。制品库读不到时沿用锁文件里记的上一次的值，数字不会回落。
-
-### 数据仓侧配置
-
-`market/policy.json` 增加 `mirror` 块：
-
-```json
-"mirror": {
-  "enabled": false,
-  "repo": "OneDragon-Anyone/plugin-mirror",
-  "pypi": "OneDragon-Anyone/plugin-mirror-release",
-  "branch": "main"
-}
-```
-
-`enabled: false` 时整段逻辑跳过，可安全灰度。
-
-### 密钥
-
-数据仓 Settings → Secrets：
-
-- `CNB_TOKEN`：一个令牌同时用于上传安装包、读取下载量与提交索引封面。范围选到组织
-  （或同时包含 `plugin-mirror` 与 `plugin-mirror-release`），权限要同时有代码仓库写
-  和制品库读写。未配置时跳过镜像
-
-调用方 workflow 需带 `secrets: inherit` 才会传进 reusable 工作流。
-
-可选环境变量：`CNB_MIRROR_REPO`、`CNB_PYPI_REPO`、`CNB_API_ENDPOINT`、`CNB_PYPI_ENDPOINT`、
-`CNB_MIRROR_BRANCH`。仓库与制品库都必须**公开**，否则用户匿名下载不了。
-
-### 实现位置
-
-| 文件 | 职责 |
-|---|---|
-| `scripts/lib/cnb.ts` | 制品库客户端：multipart 上传、读 simple 索引取真实地址并核对 sha256、列库内文件、读下载总量；索引与封面走 git 提交到仓库根目录 |
-| `scripts/build-market.ts` | `publishMirror()` 新版本上传；`republishMirror()` 给缺镜像的旧版本补传；`countDownloads()` 合并两个源的下载量 |
-| `src/lib/types.ts` | `MarketPolicy.mirror`、`WarningCode.mirror_failed` |
-
-### 注意事项
-
-- **必须原字节上传**：客户端强制核对 sha256，重新打包会导致安装被拒
-- 上传后从 simple 索引回读地址，`#sha256=` 里的摘要参与比对，不一致直接抛错
-- 幂等靠锁文件的 `mirrorUrl` 字段；单次上传失败只记 `mirror_failed` 告警，该版本
-  回落到 GitHub 原址，下次构建自动补传
+产物写入站点目录下的 `public/api/`（索引、统计与封面），该目录由构建生成、不入库。
 
 ---
 
 ## 版本与引用规范
 
-- 数据仓通过 `@v1` 引用本仓库的可复用工作流。
-- `v1` 是可移动的主版本标签：功能改进维护在 `master`，确认稳定后把 `v1` 前移到最新提交，
-  消费者无需改动引用。工作流内部 `Checkout tools` 的 `ref` 也用 `v1`，保证工具代码与
-  工作流文件来自同一个提交。
+- 数据仓引用本仓库的可复用工作流时用主版本标签，标签内容随 `master` 前移，消费者无需改动引用。
+- 工作流内部 `Checkout tools` 的 `ref` 用同一个标签，保证工具代码与工作流文件来自同一个提交。
+
+---
+
+## 国内镜像
+
+索引与封面另发一份到 [plugin-mirror](https://cnb.cool/OneDragon-Anyone/plugin-mirror)，
+仓库与分支由数据仓 `market/policy.json` 的 `mirror.index` 指定，客户端读该仓库根目录的
+`plugins.json` 与 `covers/`。数据仓需配 `CNB_TOKEN`（仓库写权限）；未配或 `mirror.enabled`
+写 `false` 时不镜像，不配置视为开启。
+
+插件包不托管，一律从作者仓库的 GitHub Release 下载，安装前校验 sha256。作者自建镜像按版本
+写进 `market/plugins/{id}.json`，只写自建的那几个源，`github` 由构建补：
+
+```json
+"sources": {
+  "v1.2.0": {
+    "github": "https://github.com/owner/repo/releases/download/v1.2.0/xxx.zip",
+    "cnb": "https://cnb.cool/owner/repo/-/releases/download/v1.2.0/xxx.zip"
+  }
+}
+```
+
+上面 `cnb` 是作者声明的，`github` 是构建按仓库与 tag 拼的，写进数据仓会被校验拒绝。键用
+`github` / `cnb` / `gitee` 时参与下载源排序，其他键只能兜底；tag 对不上已收录版本的条目会被
+忽略，构建摘要里有提示。
