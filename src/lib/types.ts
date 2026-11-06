@@ -119,12 +119,13 @@ export interface MarketSourceEntry {
   status: MarketStatus;
   pinned?: boolean;
   /**
-   * 作者自建的镜像地址 按 release tag 分组 每个版本各写各的。
+   * 作者自建的镜像仓库，一个或两个（cnb + gitee），也只收这两家。
    *
-   * 内层键用下载源 ID（github / cnb / gitee 会按下载源顺序参与排序，自定义键只能兜底），
-   * 值是该版本在该源上的地址。`github` 由构建填，不能在这里覆盖。
+   * 只填仓库地址本身，例如 `https://cnb.cool/组名/仓库名`、`https://gitee.com/用户名/仓库名`；
+   * 两个用数组，一个直接写字符串。下载路径由构建按域名拼好，发新版不用回来改。
+   * 镜像里的 tag 与附件名要和 GitHub 一致。
    */
-  sources?: Record<string, Record<string, string>>;
+  mirror?: string | string[];
   review: {
     issue?: number;
     pr?: number;
