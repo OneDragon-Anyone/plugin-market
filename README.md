@@ -1,6 +1,6 @@
 # ZZZOD 插件市场仓
 
-自动审核插件提交、定时构建索引、渲染市场网页，并把索引与封面镜像到国内可直读的仓库。
+自动审核插件提交、定时构建索引、渲染市场网页，并把索引与封面另发一份到 CNB。
 
 - 🌐 **在线插件市场**：[https://onedragon-anyone.github.io/plugin-data/](https://onedragon-anyone.github.io/plugin-data/)
 - 📦 **配套数据仓**：[OneDragon-Anyone/plugin-data](https://github.com/OneDragon-Anyone/plugin-data)（存放插件收录配置与索引）
@@ -46,36 +46,20 @@ $env:TEMPLATE_DIR = "../plugin-template"
 pnpm market:build
 ```
 
-产物写入站点目录下的 `public/api/`（索引、统计与封面），该目录由构建生成、不入库。
+产物写入站点目录下的 `public/api/`（索引、统计与封面，按 API 版本分子目录），该目录由构建生成、不入库。
 
 ---
 
 ## 版本与引用规范
 
-- 数据仓引用本仓库的可复用工作流时用主版本标签，标签内容随 `master` 前移，消费者无需改动引用。
-- 工作流内部 `Checkout tools` 的 `ref` 用同一个标签，保证工具代码与工作流文件来自同一个提交。
+- 数据仓引用本仓的可复用工作流时用主版本标签，标签随 `master` 前移，消费者不用改引用。
+- 工作流里检出本仓代码用调用方 workflow 所在的提交（`job.workflow_sha`），工具代码与工作流文件不会错位。
+- 模板仓坐标与 tag 是工作流的输入参数（`template_repository` / `template_ref`），由调用方传，本仓不写死。
 
 ---
 
 ## 国内镜像
 
-索引与封面另发一份到 [plugin-mirror](https://cnb.cool/OneDragon-Anyone/plugin-mirror)，
-仓库与分支由数据仓 `market/policy.json` 的 `mirror.index` 指定，客户端读该仓库根目录的
-`plugins.json` 与 `covers/`。数据仓需配 `CNB_TOKEN`（仓库写权限）；未配或 `mirror.enabled`
-写 `false` 时不镜像，不配置视为开启。
+构建会把索引与封面另发一份到 [plugin-mirror](https://cnb.cool/OneDragon-Anyone/plugin-mirror)，与 GitHub Pages 上是同一份文件。仓库根目录的 `plugins.json` 与 `covers/` 供客户端读取。目标仓库配在数据仓 `market/policy.json` 的 `mirror.index` 里（`repo` + `branch`），凭证用环境变量 `CNB_TOKEN`，有该仓读写权限即可。没配或缺凭证时跳过镜像，构建照常出结果。
 
-插件包不托管，一律从作者仓库的 GitHub Release 下载，安装前校验 sha256。作者自建镜像按版本
-写进 `market/plugins/{id}.json`，只写自建的那几个源，`github` 由构建补：
-
-```json
-"sources": {
-  "v1.2.0": {
-    "github": "https://github.com/owner/repo/releases/download/v1.2.0/xxx.zip",
-    "cnb": "https://cnb.cool/owner/repo/-/releases/download/v1.2.0/xxx.zip"
-  }
-}
-```
-
-上面 `cnb` 是作者声明的，`github` 是构建按仓库与 tag 拼的，写进数据仓会被校验拒绝。键用
-`github` / `cnb` / `gitee` 时参与下载源排序，其他键只能兜底；tag 对不上已收录版本的条目会被
-忽略，构建摘要里有提示。
+插件包不经过本仓，默认取作者仓库的 GitHub Release 直链；作者自建镜像的写法见数据仓 README。

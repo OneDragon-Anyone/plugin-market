@@ -21,6 +21,7 @@ import { type GhRelease, type GhRepo, github, githubText, listReleases, orNull, 
 import { renderSafeHtml } from "./lib/html";
 import { publishIndexFile, readIndexTarget } from "./lib/cnb";
 import { checkEntries, readEntryFiles, readPolicy, rootDir } from "./lib/market";
+import { parseMirrors, type MirrorHost, type MirrorRepo } from "./lib/mirror";
 import { downloadAndValidate } from "./lib/validator";
 
 interface LockRelease {
@@ -124,22 +125,47 @@ async function previousEntry(id: string): Promise<PreviousEntry | null> {
   }
 }
 
-/** 由仓库地址与 tag 拼 GitHub 下载地址 不依赖上一次索引里记的地址 */
-function githubAssetUrl(repoUrl: string, tag: string, assetName: string): string {
-  const full = repoUrl.replace(/^https?:\/\/github\.com\//, "").replace(/\/+$/, "");
-  return `https://github.com/${full}/releases/download/${encodeURIComponent(tag)}/${assetName}`;
+/** 拼 release 附件地址：站点 + 仓库坐标 + 该站的 release 路径 + tag + 附件名 */
+function releaseAssetUrl(origin: string, repo: string, releasePath: string, tag: string, assetName: string): string {
+  const path = repo
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  return `${origin}/${path}${releasePath}/${encodeURIComponent(tag)}/${assetName}`;
+}
+
+/** 由仓库与 tag 拼 GitHub 下载地址 不依赖上一次索引里记的地址；仓库可以给 owner/repo 或仓库页地址 */
+function githubAssetUrl(repo: string, tag: string, assetName: string): string {
+  const full = repo.replace(/^https?:\/\/github\.com\//, "").replace(/\/+$/, "");
+  return releaseAssetUrl("https://github.com", full, "/releases/download", tag, assetName);
+}
+
+/** 两家的 release 路径格式不一样，cnb 多一层 `/-/` */
+const MIRROR_RELEASE_PATH: Record<MirrorHost, string> = {
+  cnb: "/-/releases/download",
+  gitee: "/releases/download"
+};
+
+/** 镜像仓库拼成这一版的下载地址 */
+function mirrorAssetUrl(target: MirrorRepo, tag: string, assetName: string): string {
+  return releaseAssetUrl(target.origin, target.repo, MIRROR_RELEASE_PATH[target.host], tag, assetName);
 }
 
 /** 下载地址表：作者声明的镜像 + GitHub 原址 后者恒由构建填 */
-function mergeSources(declared: Record<string, string>, githubUrl: string): Record<string, string> {
-  return { ...declared, github: githubUrl };
+function buildSources(
+  targets: MirrorRepo[],
+  tag: string,
+  assetName: string,
+  githubUrl: string
+): Record<string, string> {
+  const sources: Record<string, string> = {};
+  for (const target of targets) sources[target.host] = mirrorAssetUrl(target, tag, assetName);
+  sources.github = githubUrl;
+  return sources;
 }
 
 /** 整条沿用上一次构建的结果：下载地址重排为「GitHub 原址 + 作者声明」，统计值以 stats.json 为准 */
-async function carryOver(
-  previous: PreviousEntry,
-  declared: Record<string, Record<string, string>>
-): Promise<BuiltPlugin> {
+async function carryOver(previous: PreviousEntry, mirrors: MirrorRepo[]): Promise<BuiltPlugin> {
   const { stars, downloads, ...entry } = previous;
   const normalize = (release: PluginRelease): PluginRelease => {
     const kept = release.sources?.github;
@@ -147,7 +173,11 @@ async function carryOver(
       kept !== undefined && kept.startsWith("https://github.com/")
         ? kept
         : githubAssetUrl(entry.repo, release.tag, release.assetName);
-    return { ...release, downloadUrl: githubUrl, sources: mergeSources(declared[release.tag] ?? {}, githubUrl) };
+    return {
+      ...release,
+      downloadUrl: githubUrl,
+      sources: buildSources(mirrors, release.tag, release.assetName, githubUrl)
+    };
   };
   return {
     ...entry,
@@ -186,7 +216,7 @@ async function fallbackEntry(
   const previous = await previousEntry(entry.id);
   if (!previous) return null;
   return {
-    ...(await carryOver(previous, entry.sources ?? {})),
+    ...(await carryOver(previous, parseMirrors(entry.mirror))),
     status: entry.status as PluginEntry["status"],
     pinned: entry.pinned ?? false,
     tags: entry.tags,
@@ -301,12 +331,10 @@ function toRelease(
   locked: LockRelease,
   live: GhRelease,
   repo: GhRepo,
-  declared: Record<string, string>
+  mirrors: MirrorRepo[]
 ): PluginRelease {
   const asset = live.assets.find((item) => item.id === locked.assetId);
-  const githubUrl =
-    asset?.browser_download_url ??
-    `https://github.com/${repo.full_name}/releases/download/${encodeURIComponent(tag)}/${locked.assetName}`;
+  const githubUrl = asset?.browser_download_url ?? githubAssetUrl(repo.full_name, tag, locked.assetName);
   return {
     version: locked.version,
     versionCode: locked.versionCode,
@@ -317,7 +345,7 @@ function toRelease(
     publishedAt: publishedAt(live),
     changelogHtml: renderSafeHtml(live.body_html, repo.full_name, locked.commit),
     downloadUrl: githubUrl,
-    sources: mergeSources(declared, githubUrl),
+    sources: buildSources(mirrors, tag, locked.assetName, githubUrl),
     assetName: locked.assetName,
     size: locked.size,
     sha256: locked.sha256
@@ -366,19 +394,14 @@ async function processPlugin(
   await acceptNewReleases(entry, repo, releases, lock, policy, workDir, warnings);
 
   const live = new Map(releases.map((release) => [release.tag_name, release]));
-  const declared = entry.sources ?? {};
+  const mirrors = parseMirrors(entry.mirror);
   const accepted = Object.entries(lock.releases)
     .filter(([tag]) => live.has(tag))
-    .map(([tag, locked]) => toRelease(tag, locked, live.get(tag)!, repo, declared[tag] ?? {}))
+    .map(([tag, locked]) => toRelease(tag, locked, live.get(tag)!, repo, mirrors))
     .sort((a, b) => b.versionCode - a.versionCode);
   if (accepted.length === 0) {
     report.push(`- ⏸️ \`${entry.id}\` has no accepted release yet, not published`);
     return null;
-  }
-  for (const tag of Object.keys(declared)) {
-    if (!accepted.some((release) => release.tag === tag)) {
-      report.push(`- ⚠️ \`${entry.id}\` sources 里的 ${tag} 没有对应版本，已忽略`);
-    }
   }
 
   const latest = accepted.find((release) => !release.prerelease) ?? null;
@@ -635,7 +658,7 @@ async function main(): Promise<void> {
         const message = error instanceof Error ? error.message : String(error);
         report.push(`- ❌ \`${entry.id}\` sync failed: ${message}`);
         const previous = await previousEntry(entry.id);
-        if (previous) plugins.push(await carryOver(previous, entry.sources ?? {}));
+        if (previous) plugins.push(await carryOver(previous, parseMirrors(entry.mirror)));
       }
     }
   } finally {
