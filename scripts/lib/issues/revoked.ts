@@ -38,18 +38,18 @@ function describeRevoked(releases: GhRelease[], assetName: string): (tag: string
     }
     const asset = release.assets.find((item) => item.name === assetName);
     if (!asset) {
-      return { kind: "deleted", text: `- \`${tag}\`　市场 sha256 \`${market}\`，附件已删除` };
+      return { kind: "deleted", text: `- \`${tag}\`　市场 sha256 \`${market}\`，安装包已删除` };
     }
     const digest = assetDigest(asset);
     if (digest === null) {
-      return { kind: "unknown", text: `- \`${tag}\`　市场 sha256 \`${market}\`，附件被重新上传，内容无法比对` };
+      return { kind: "unknown", text: `- \`${tag}\`　市场 sha256 \`${market}\`，安装包被重新上传，内容无法比对` };
     }
     if (digest !== record.sha256) {
       return { kind: "changed", text: `- \`${tag}\`　市场 sha256 \`${market}\`，GitHub 现在 \`${digest.slice(0, 8)}\`` };
     }
     // 内容一致的重传现在不下架，走不到这一行；只有判定口径改回「重传即变更」才会到，
     // 那时得说清内容相同，不能沿用上面「指纹对不上」的说法
-    return { kind: "same", text: `- \`${tag}\`　市场 sha256 \`${market}\`，附件被重新上传，内容相同` };
+    return { kind: "same", text: `- \`${tag}\`　市场 sha256 \`${market}\`，安装包被重新上传，内容相同` };
   };
 }
 
@@ -113,7 +113,9 @@ function buildRevokedBody(
     "",
     ...(cleanup
       ? [
-          `这些版本恢复不了。附件还挂在 [releases 页](${repo.html_url}/releases)上，把它们删掉之后，这条 issue 就会自动关闭。`,
+          `上面列出的这几个版本已经无法恢复，建议把它们从 [releases 页](${repo.html_url}/releases) 上删掉。`,
+          "",
+          "市场会定期核对，确认都删掉之后，这条 issue 将自动关闭。",
           "",
           "想继续更新的话，往后发新版本就行，内部版本号比上一个大，市场会自动收录。"
         ]
@@ -124,7 +126,7 @@ function buildRevokedBody(
         ]),
     ...paragraph(offlineNote(listed)),
     "",
-    `${scope}，附件可以不用删；删掉或者拿新包盖掉，对应的版本会下架。`
+    `${scope}，安装包可以不用删；删掉或者拿新包盖掉，对应的版本会下架。`
   ].join("\n");
 }
 
@@ -160,7 +162,7 @@ export async function notifyRevoked(options: RevokedNoticeOptions): Promise<void
         target,
         lock.revokedIssue,
         [
-          `又有 ${fresh.length} 个版本的附件被重新上传或删除，已下架：`,
+          `又有 ${fresh.length} 个版本的安装包被重新上传或删除，已下架：`,
           "",
           ...lines.map((line) => line.text),
           ...paragraph(offlineNote(listed))
@@ -168,7 +170,7 @@ export async function notifyRevoked(options: RevokedNoticeOptions): Promise<void
       );
       if (appended) {
         lock.revokedNotified = revoked.map(([tag]) => tag);
-        log(`- 📮 \`${entry.id}\` revoked notice appended to #${lock.revokedIssue}`);
+        log(`- 📮 \`${entry.id}\` ${revoked.length} 个版本已下架，已补进 issue #${lock.revokedIssue}`);
         return;
       }
       // 404 说明那条被删了 只能另开 问题还在
@@ -183,31 +185,39 @@ export async function notifyRevoked(options: RevokedNoticeOptions): Promise<void
     });
     lock.revokedNotified = revoked.map(([tag]) => tag);
     delete lock.revokedResolved;
-    log(`- 📮 \`${entry.id}\` revoked notice opened #${lock.revokedIssue}`);
+    log(`- 📮 \`${entry.id}\` ${revoked.length} 个版本已下架，已开 issue #${lock.revokedIssue}`);
     return;
   }
 
   // 没有新下架的版本 看提醒他处理的事做完没有
   if (lock.revokedIssue === undefined || lock.revokedResolved) return;
   const issue = lock.revokedIssue;
-  const resolve = async (note: string, reason: string): Promise<void> => {
+  const resolve = async (note: string, marker: string, label: string): Promise<void> => {
     if (await tryCommentIssue(target, issue, note)) {
       await closeIssue(target, issue, "completed");
-      log(`- 📮 \`${entry.id}\` revoked notice #${issue} closed (${reason})`);
+      log(`- 📮 \`${entry.id}\` 问题已解决（${label}），issue #${issue} 已关闭`);
     } else {
-      log(`- ⚠️ \`${entry.id}\` 通知 #${issue} 已不存在，跳过关闭（${reason}）`);
+      log(`- ⚠️ \`${entry.id}\` 通知 #${issue} 已不存在，跳过关闭（${label}）`);
     }
-    lock.revokedResolved = reason;
+    lock.revokedResolved = marker;
   };
 
   // 下架的版本都传回了内容一致的包，已经恢复上架，没东西要删
   if (revoked.length === 0) {
-    await resolve("重新上传的安装包和市场记录一致，这些版本已经恢复上架，这条关了。", RESOLVED_BY_RESTORE);
+    await resolve(
+      "重新上传的安装包和市场记录一致，这些版本已经恢复上架，这条关了。",
+      RESOLVED_BY_RESTORE,
+      "版本已恢复上架"
+    );
     return;
   }
-  // 还有版本挂着附件 全删掉了才算解决
+  // 还有版本挂着附件 全删掉了才算解决；没删完就每轮都报一行 让汇总里一直看得到这个插件
+  // 这行不写版本数和待办细节 免得和「恢复上架」混起来 具体事项看 issue
   for (const [tag] of revoked) {
-    if (await assetStillThere(repo.full_name, releases, assetName, tag)) return;
+    if (await assetStillThere(repo.full_name, releases, assetName, tag)) {
+      log(`- 📮 \`${entry.id}\` issue #${issue} 待作者处理`);
+      return;
+    }
   }
-  await resolve("留在 releases 页上的附件已经删掉了，这条关了。", RESOLVED_BY_CLEANUP);
+  await resolve("留在 releases 页上的安装包已经删掉了，这条关了。", RESOLVED_BY_CLEANUP, "安装包已删");
 }
