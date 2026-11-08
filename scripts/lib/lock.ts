@@ -37,9 +37,7 @@ export interface LockPlugin {
   revokedIssue?: number;
   /** 已经写进 issue 的版本 避免每次构建重复通知 */
   revokedNotified?: string[];
-  /** 开通知时市场已收录的最大内部版本号 只有比它还大的才算作者补发 用来关 issue */
-  revokedFloor?: number;
-  /** 作者补发新版本后自动关闭的那条通知 记下当时的 tag 免得反复关 */
+  /** 附件删掉、issue 关掉之后记下的记号 免得每轮重复关 */
   revokedResolved?: string;
 }
 
