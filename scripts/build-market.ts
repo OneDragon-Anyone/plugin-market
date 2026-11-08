@@ -232,6 +232,18 @@ async function acceptNewReleases(
     const locked = lock.releases[tag];
 
     if (locked) {
+      // 下架之后作者又把包传回来了：内容跟市场记录一致，就当没被动过，恢复收录
+      if (locked.revokedAt) {
+        const digest = asset ? assetDigest(asset) : null;
+        if (!asset || digest !== locked.sha256) continue;
+        delete locked.revokedAt;
+        delete locked.revokedReason;
+        locked.assetId = asset.id;
+        // 这个版本不用再等作者处理了 通知那边的账也要跟着销
+        lock.revokedNotified = (lock.revokedNotified ?? []).filter((item) => item !== tag);
+        report.push(`- 🔄 \`${entry.id}\` ${tag} 附件传回了原来的内容，恢复收录`);
+        continue;
+      }
       // 已收录版本只认内容：附件换了但摘要一致，说明重传的是同一份文件，
       // 客户端照样校验得过，认下新的 id 继续收录；摘要不同或拿不到才下架
       if (!asset) {
