@@ -82,8 +82,8 @@ async function previousStats(): Promise<Record<string, PluginStats>> {
 }
 
 /** 沿用上一次构建的统计值 免得同步失败的插件被清零 */
-async function previousStatsFor(id: string, known: Partial<PluginStats>): Promise<PluginStats> {
-  return (await previousStats())[id] ?? { stars: known.stars ?? 0, downloads: known.downloads ?? 0 };
+async function previousStatsFor(id: string): Promise<PluginStats> {
+  return (await previousStats())[id] ?? { stars: 0, downloads: 0 };
 }
 
 /** 上一次构建写出的条目 统计字段由 stats.json 单独提供 */
@@ -140,7 +140,9 @@ function buildSources(
 
 /** 整条沿用上一次构建的结果：下载地址重排为「GitHub 原址 + 作者声明」，统计值以 stats.json 为准 */
 async function carryOver(previous: PreviousEntry, mirrors: MirrorRepo[]): Promise<BuiltPlugin> {
-  const { stars, downloads, ...entry } = previous;
+  const entry = { ...previous };
+  delete entry.stars;
+  delete entry.downloads;
   const normalize = (release: PluginRelease): PluginRelease => {
     const kept = release.sources?.github;
     const githubUrl =
@@ -158,7 +160,7 @@ async function carryOver(previous: PreviousEntry, mirrors: MirrorRepo[]): Promis
     releases: (entry.releases ?? []).map(normalize),
     latest: entry.latest ? normalize(entry.latest) : null,
     latestBeta: entry.latestBeta ? normalize(entry.latestBeta) : null,
-    ...(await previousStatsFor(entry.id, { stars, downloads }))
+    ...(await previousStatsFor(entry.id))
   };
 }
 
