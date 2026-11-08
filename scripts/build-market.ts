@@ -17,7 +17,7 @@ import type {
   SearchEntry,
   WarningCode
 } from "@/lib/types";
-import { type GhRelease, type GhRepo, github, githubText, listReleases, orNull, resolveTagCommit } from "./lib/github";
+import { assetDigest, GitHubError, type GhRelease, type GhRepo, github, githubText, listReleases, orNull, resolveTagCommit } from "./lib/github";
 import type { Lock, LockPlugin, LockRelease } from "./lib/lock";
 import { renderSafeHtml } from "./lib/html";
 import { publishIndexFile, readIndexTarget } from "./lib/cnb";
@@ -195,6 +195,23 @@ async function fallbackEntry(
   };
 }
 
+/** 把这个版本标记为下架：下架时间只写一次 之后每轮只重复告警 */
+function revokeRelease(
+  entryId: string,
+  tag: string,
+  release: LockRelease,
+  code: "asset_changed" | "missing_asset",
+  detail: string,
+  warnings: PluginWarning[]
+): void {
+  if (!release.revokedAt) {
+    release.revokedAt = now.toISOString();
+    release.revokedReason = code;
+  }
+  warnings.push({ code, message: `${detail}，该版本已下架`, version: release.version });
+  report.push(`- ⛔ \`${entryId}\` ${tag} ${code}: ${detail}`);
+}
+
 async function acceptNewReleases(
   entry: MarketSourceEntry,
   repo: GhRepo,
@@ -215,13 +232,18 @@ async function acceptNewReleases(
     const locked = lock.releases[tag];
 
     if (locked) {
-      const changed =
-        !asset ||
-        asset.id !== locked.assetId ||
-        asset.size !== locked.size ||
-        (asset.digest ? asset.digest !== `sha256:${locked.sha256}` : false);
-      if (changed) {
-        warnings.push({ code: "asset_changed", message: `${tag} 的 ${assetName} 在收录后被替换或删除，继续使用收录时的记录`, version });
+      // 已收录版本只认内容：附件换了但摘要一致，说明重传的是同一份文件，
+      // 客户端照样校验得过，认下新的 id 继续收录；摘要不同或拿不到才下架
+      if (!asset) {
+        revokeRelease(entry.id, tag, locked, "missing_asset", `${assetName} 已从 release 中删除`, warnings);
+      } else if (asset.id !== locked.assetId) {
+        const digest = assetDigest(asset);
+        if (digest !== null && digest === locked.sha256) {
+          locked.assetId = asset.id;
+          report.push(`- ♻️ \`${entry.id}\` ${tag} 附件被重传，内容一致，继续收录`);
+        } else {
+          revokeRelease(entry.id, tag, locked, "asset_changed", `${assetName} 在收录后被替换`, warnings);
+        }
       }
       continue;
     }
@@ -292,6 +314,30 @@ async function acceptNewReleases(
     lock.maxVersionCode = versionCode;
     report.push(`- ✅ \`${entry.id}\` accepted ${tag} (versionCode ${versionCode}, sha256 ${sha256.slice(0, 12)})`);
   }
+
+  // 列表里没有的已收录版本：整个 release 可能被删了，也可能只是超出 50 条的列表窗口。
+  // 只探这几个 tag，正常插件一个额外请求都不会发。
+  const present = new Set(releases.map((release) => release.tag_name));
+  for (const [tag, locked] of Object.entries(lock.releases)) {
+    if (present.has(tag) || locked.revokedAt) continue;
+    let found: GhRelease | null = null;
+    try {
+      found = await github<GhRelease>(`/repos/${repo.full_name}/releases/tags/${tag}`);
+    } catch (error) {
+      if (!(error instanceof GitHubError && error.status === 404)) {
+        const message = error instanceof Error ? error.message : String(error);
+        report.push(`- ⚠️ \`${entry.id}\` ${tag} 是否还在无法确认（${message}），本轮跳过`);
+        continue;
+      }
+    }
+    if (found) {
+      // 只是被列表窗口截掉了 补回列表 版本照常展示
+      releases.push(found);
+      report.push(`- ℹ️ \`${entry.id}\` ${tag} 不在本次列表里，已单独补拉`);
+      continue;
+    }
+    revokeRelease(entry.id, tag, locked, "missing_asset", `${tag} 的 release 已在 GitHub 上删除`, warnings);
+  }
 }
 
 /** 索引里每个版本给出的下载地址：GitHub 原址打底 再并上作者声明的镜像 */
@@ -321,9 +367,13 @@ function toRelease(
   };
 }
 
-/** 已收录版本的 GitHub 附件下载量 */
+/** 已收录版本的 GitHub 附件下载量 下架的版本不再分发 一并剔除 */
 function countDownloads(releases: GhRelease[], lock: LockPlugin): number {
-  const counted = new Set(Object.values(lock.releases).map((release) => release.assetId));
+  const counted = new Set(
+    Object.values(lock.releases)
+      .filter((release) => !release.revokedAt)
+      .map((release) => release.assetId)
+  );
   return releases
     .flatMap((release) => release.assets)
     .filter((asset) => counted.has(asset.id))
@@ -365,7 +415,7 @@ async function processPlugin(
   const live = new Map(releases.map((release) => [release.tag_name, release]));
   const mirrors = parseMirrors(entry.mirror);
   const accepted = Object.entries(lock.releases)
-    .filter(([tag]) => live.has(tag))
+    .filter(([tag, locked]) => live.has(tag) && !locked.revokedAt)
     .map(([tag, locked]) => toRelease(tag, locked, live.get(tag)!, repo, mirrors))
     .sort((a, b) => b.versionCode - a.versionCode);
   if (accepted.length === 0) {

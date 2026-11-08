@@ -97,6 +97,15 @@ export interface GhRelease {
   assets: GhAsset[];
 }
 
+/**
+ * 附件内容摘要：GitHub 直接给 sha256，不用下载就能比对。
+ * 老附件没有这个字段，返回 null 表示比不了。
+ */
+export function assetDigest(asset: GhAsset): string | null {
+  const digest = asset.digest ?? "";
+  return /^sha256:[0-9a-f]{64}$/i.test(digest) ? digest.slice(7).toLowerCase() : null;
+}
+
 export async function listReleases(fullName: string): Promise<GhRelease[]> {
   const releases = await github<GhRelease[]>(`/repos/${fullName}/releases?per_page=50`, {
     accept: "application/vnd.github.html+json"
