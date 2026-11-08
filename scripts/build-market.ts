@@ -16,45 +16,16 @@ import type {
   RiskTag,
   SearchEntry,
   WarningCode
-} from "../src/lib/types";
-import { type GhRelease, type GhRepo, github, githubText, listReleases, orNull, resolveTagCommit } from "./lib/github";
+} from "@/lib/types";
+import { assetDigest, GitHubError, type GhRelease, type GhRepo, github, githubText, listReleases, orNull, resolveTagCommit } from "./lib/github";
+import type { Lock, LockPlugin, LockRelease } from "./lib/lock";
+import { notifyRevoked } from "./lib/issues/revoked";
+import { openStaleIssue } from "./lib/issues/stale";
 import { renderSafeHtml } from "./lib/html";
 import { publishIndexFile, readIndexTarget } from "./lib/cnb";
 import { checkEntries, readEntryFiles, readPolicy, rootDir } from "./lib/market";
 import { parseMirrors, type MirrorHost, type MirrorRepo } from "./lib/mirror";
 import { downloadAndValidate } from "./lib/validator";
-
-interface LockRelease {
-  version: string;
-  versionCode: number;
-  commit: string;
-  assetId: number;
-  assetName: string;
-  size: number;
-  sha256: string;
-  verifiedAt: string;
-  hasAppSetting: boolean;
-  cover: string;
-  manifest: Record<string, unknown>;
-}
-
-interface LockRejection {
-  assetId: number;
-  code: WarningCode;
-  message: string;
-}
-
-interface LockPlugin {
-  repoId: number;
-  repo: string;
-  maxVersionCode: number;
-  releases: Record<string, LockRelease>;
-  rejected: Record<string, LockRejection>;
-  unreachableSince?: string;
-  staleIssue?: number;
-}
-
-type Lock = Record<string, LockPlugin>;
 
 /** 构建过程中的条目 统计字段写盘时单独存进 stats.json */
 type BuiltPlugin = PluginEntry & PluginStats;
@@ -68,6 +39,9 @@ const previousApiBase = (process.env.PREVIOUS_API_URL ?? "").trim();
 const previousApiUrl = previousApiBase === "" ? "" : `${previousApiBase.replace(/\/+$/, "")}/`;
 /** 模板仓检出目录 与 validator 用的是同一个环境变量 */
 const templateDir = resolve(process.env.TEMPLATE_DIR ?? ".plugin-template");
+/** 自动 issue 要写进去的仓库 空串表示这轮不发（本地跑默认不发） */
+const issueTarget =
+  process.env.MARKET_OPEN_ISSUES === "true" ? (process.env.GITHUB_REPOSITORY ?? "").trim() : "";
 const runGit = promisify(execFile);
 const now = new Date();
 const report: string[] = [];
@@ -98,9 +72,15 @@ async function previousStats(): Promise<Record<string, PluginStats>> {
   if (previousApiUrl) {
     try {
       const response = await fetch(new URL("stats.json", previousApiUrl));
-      if (response.ok) loaded = ((await response.json()) as Record<string, PluginStats>) ?? {};
-    } catch {
-      // 读不到按空表处理 统计值退回上一次构建的记录
+      if (response.ok) {
+        loaded = ((await response.json()) as Record<string, PluginStats>) ?? {};
+      } else if (response.status !== 404) {
+        // 404 就是还没发过 属于正常情况 不用提醒
+        report.push(`- ⚠️ 读不到上一版 stats.json（HTTP ${response.status}），本轮同步失败的插件统计会归零`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      report.push(`- ⚠️ 读取上一版 stats.json 失败（${message}），本轮同步失败的插件统计会归零`);
     }
   }
   cachedPreviousStats = loaded;
@@ -108,8 +88,8 @@ async function previousStats(): Promise<Record<string, PluginStats>> {
 }
 
 /** 沿用上一次构建的统计值 免得同步失败的插件被清零 */
-async function previousStatsFor(id: string, known: Partial<PluginStats>): Promise<PluginStats> {
-  return (await previousStats())[id] ?? { stars: known.stars ?? 0, downloads: known.downloads ?? 0 };
+async function previousStatsFor(id: string): Promise<PluginStats> {
+  return (await previousStats())[id] ?? { stars: 0, downloads: 0 };
 }
 
 /** 上一次构建写出的条目 统计字段由 stats.json 单独提供 */
@@ -166,7 +146,9 @@ function buildSources(
 
 /** 整条沿用上一次构建的结果：下载地址重排为「GitHub 原址 + 作者声明」，统计值以 stats.json 为准 */
 async function carryOver(previous: PreviousEntry, mirrors: MirrorRepo[]): Promise<BuiltPlugin> {
-  const { stars, downloads, ...entry } = previous;
+  const entry = { ...previous };
+  delete entry.stars;
+  delete entry.downloads;
   const normalize = (release: PluginRelease): PluginRelease => {
     const kept = release.sources?.github;
     const githubUrl =
@@ -184,21 +166,8 @@ async function carryOver(previous: PreviousEntry, mirrors: MirrorRepo[]): Promis
     releases: (entry.releases ?? []).map(normalize),
     latest: entry.latest ? normalize(entry.latest) : null,
     latestBeta: entry.latestBeta ? normalize(entry.latestBeta) : null,
-    ...(await previousStatsFor(entry.id, { stars, downloads }))
+    ...(await previousStatsFor(entry.id))
   };
-}
-
-async function openStaleIssue(entry: MarketSourceEntry, days: number): Promise<number | undefined> {
-  const marketRepo = process.env.GITHUB_REPOSITORY;
-  if (!marketRepo || process.env.MARKET_OPEN_ISSUES !== "true") return undefined;
-  const issue = await github<{ number: number }>(`/repos/${marketRepo}/issues`, {
-    method: "POST",
-    body: {
-      title: `[stale] ${entry.id} 的仓库已连续 ${days} 天无法访问`,
-      body: `插件 \`${entry.id}\`（repoId ${entry.repoId}，提交时为 \`${entry.repo}\`）的仓库已连续 ${days} 天无法访问，网站已标记为 stale。\n\n请维护者确认后决定是否将 \`status\` 改为 \`suspended\`。`
-    }
-  });
-  return issue.number;
 }
 
 async function fallbackEntry(
@@ -210,7 +179,7 @@ async function fallbackEntry(
   lock.unreachableSince ??= now.toISOString();
   const days = (now.getTime() - new Date(lock.unreachableSince).getTime()) / 86_400_000;
   const stale = days >= policy.repoUnreachableDays;
-  if (stale && !lock.staleIssue) lock.staleIssue = await openStaleIssue(entry, policy.repoUnreachableDays);
+  if (stale && !lock.staleIssue) lock.staleIssue = await openStaleIssue(entry, policy.repoUnreachableDays, issueTarget);
   report.push(`- ⚠️ \`${entry.id}\` ${warning.code}: ${warning.message}${stale ? "（stale）" : ""}`);
 
   const previous = await previousEntry(entry.id);
@@ -224,6 +193,23 @@ async function fallbackEntry(
     stale,
     warnings: [warning]
   };
+}
+
+/** 把这个版本标记为下架：下架时间只写一次 之后每轮只重复告警 */
+function revokeRelease(
+  entryId: string,
+  tag: string,
+  release: LockRelease,
+  code: "asset_changed" | "missing_asset",
+  detail: string,
+  warnings: PluginWarning[]
+): void {
+  if (!release.revokedAt) {
+    release.revokedAt = now.toISOString();
+    release.revokedReason = code;
+  }
+  warnings.push({ code, message: `${detail}，该版本已下架`, version: release.version });
+  report.push(`- ⛔ \`${entryId}\` ${tag} ${code}: ${detail}`);
 }
 
 async function acceptNewReleases(
@@ -246,13 +232,18 @@ async function acceptNewReleases(
     const locked = lock.releases[tag];
 
     if (locked) {
-      const changed =
-        !asset ||
-        asset.id !== locked.assetId ||
-        asset.size !== locked.size ||
-        (asset.digest ? asset.digest !== `sha256:${locked.sha256}` : false);
-      if (changed) {
-        warnings.push({ code: "asset_changed", message: `${tag} 的 ${assetName} 在收录后被替换或删除，继续使用收录时的记录`, version });
+      // 已收录版本只认内容：附件换了但摘要一致，说明重传的是同一份文件，
+      // 客户端照样校验得过，认下新的 id 继续收录；摘要不同或拿不到才下架
+      if (!asset) {
+        revokeRelease(entry.id, tag, locked, "missing_asset", `${assetName} 已从 release 中删除`, warnings);
+      } else if (asset.id !== locked.assetId) {
+        const digest = assetDigest(asset);
+        if (digest !== null && digest === locked.sha256) {
+          locked.assetId = asset.id;
+          report.push(`- ♻️ \`${entry.id}\` ${tag} 附件被重传，内容一致，继续收录`);
+        } else {
+          revokeRelease(entry.id, tag, locked, "asset_changed", `${assetName} 在收录后被替换`, warnings);
+        }
       }
       continue;
     }
@@ -323,6 +314,30 @@ async function acceptNewReleases(
     lock.maxVersionCode = versionCode;
     report.push(`- ✅ \`${entry.id}\` accepted ${tag} (versionCode ${versionCode}, sha256 ${sha256.slice(0, 12)})`);
   }
+
+  // 列表里没有的已收录版本：整个 release 可能被删了，也可能只是超出 50 条的列表窗口。
+  // 只探这几个 tag，正常插件一个额外请求都不会发。
+  const present = new Set(releases.map((release) => release.tag_name));
+  for (const [tag, locked] of Object.entries(lock.releases)) {
+    if (present.has(tag) || locked.revokedAt) continue;
+    let found: GhRelease | null = null;
+    try {
+      found = await github<GhRelease>(`/repos/${repo.full_name}/releases/tags/${tag}`);
+    } catch (error) {
+      if (!(error instanceof GitHubError && error.status === 404)) {
+        const message = error instanceof Error ? error.message : String(error);
+        report.push(`- ⚠️ \`${entry.id}\` ${tag} 是否还在无法确认（${message}），本轮跳过`);
+        continue;
+      }
+    }
+    if (found) {
+      // 只是被列表窗口截掉了 补回列表 版本照常展示
+      releases.push(found);
+      report.push(`- ℹ️ \`${entry.id}\` ${tag} 不在本次列表里，已单独补拉`);
+      continue;
+    }
+    revokeRelease(entry.id, tag, locked, "missing_asset", `${tag} 的 release 已在 GitHub 上删除`, warnings);
+  }
 }
 
 /** 索引里每个版本给出的下载地址：GitHub 原址打底 再并上作者声明的镜像 */
@@ -352,9 +367,13 @@ function toRelease(
   };
 }
 
-/** 已收录版本的 GitHub 附件下载量 */
+/** 已收录版本的 GitHub 附件下载量 下架的版本不再分发 一并剔除 */
 function countDownloads(releases: GhRelease[], lock: LockPlugin): number {
-  const counted = new Set(Object.values(lock.releases).map((release) => release.assetId));
+  const counted = new Set(
+    Object.values(lock.releases)
+      .filter((release) => !release.revokedAt)
+      .map((release) => release.assetId)
+  );
   return releases
     .flatMap((release) => release.assets)
     .filter((asset) => counted.has(asset.id))
@@ -391,14 +410,33 @@ async function processPlugin(
 
   const warnings: PluginWarning[] = [];
   const releases = await listReleases(repo.full_name);
+  // 收录之前先记下市场已经收到的最大版本号 通知里用来判断作者是不是补发了新版本
+  const baseline = lock.maxVersionCode;
   await acceptNewReleases(entry, repo, releases, lock, policy, workDir, warnings);
 
   const live = new Map(releases.map((release) => [release.tag_name, release]));
   const mirrors = parseMirrors(entry.mirror);
   const accepted = Object.entries(lock.releases)
-    .filter(([tag]) => live.has(tag))
+    .filter(([tag, locked]) => live.has(tag) && !locked.revokedAt)
     .map(([tag, locked]) => toRelease(tag, locked, live.get(tag)!, repo, mirrors))
     .sort((a, b) => b.versionCode - a.versionCode);
+  // 通知发不出去不该影响这轮构建 单独兜住
+  try {
+    await notifyRevoked({
+      target: issueTarget,
+      entry,
+      repo,
+      releases,
+      accepted,
+      baseline,
+      listed: accepted.length > 0,
+      lock,
+      log: (line) => report.push(line)
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    report.push(`- ⚠️ \`${entry.id}\` 下架通知发送失败: ${message}`);
+  }
   if (accepted.length === 0) {
     report.push(`- ⏸️ \`${entry.id}\` has no accepted release yet, not published`);
     return null;

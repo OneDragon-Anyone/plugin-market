@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { MarketPolicy } from "../../src/lib/types";
+import type { MarketPolicy } from "@/lib/types";
 import { downloadBytes, type GhRelease, listReleases } from "./github";
 
 export interface ValidatorResult {

@@ -1,7 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { RISK_TAGS, type MarketPolicy, type MarketSourceEntry } from "../../src/lib/types";
+import { RISK_TAGS, type MarketPolicy, type MarketSourceEntry } from "@/lib/types";
 import { checkMirror } from "./mirror";
 
 export const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");

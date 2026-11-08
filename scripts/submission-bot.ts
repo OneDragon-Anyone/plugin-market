@@ -2,9 +2,11 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { MarketPolicy, MarketSourceEntry } from "../src/lib/types";
-import { GitHubError, type GhRepo, github, orNull } from "./lib/github";
-import { formatEntry, ID_PATTERN, MAX_TAGS, pluginsDir, readPolicy, TAG_PATTERN } from "./lib/market";
+import type { MarketPolicy, MarketSourceEntry } from "@/lib/types";
+import { type GhRepo, GitHubError, github, orNull } from "./lib/github";
+import { ID_PATTERN, MAX_TAGS, formatEntry, pluginsDir, readPolicy, TAG_PATTERN } from "./lib/market";
+import { closeIssue as closeIssueRequest, commentIssue } from "./lib/issues/api";
+import { LABELS, ensureLabels as ensureLabelsExist } from "./lib/issues/labels";
 import { checkLatestRelease } from "./lib/validator";
 
 const marketRepo = process.env.GITHUB_REPOSITORY ?? "";
@@ -12,19 +14,6 @@ const baseBranch = process.env.MARKET_BASE_BRANCH ?? "master";
 const siteUrl = process.env.MARKET_SITE_URL ?? "";
 const MAINTAINER_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 const PREFIX = /^\s*\[(submission|transfer|report|appeal)\]/i;
-
-const LABELS: Record<string, { color: string; description: string }> = {
-  submission: { color: "1d76db", description: "插件收录申请" },
-  pending: { color: "fbca04", description: "校验通过，等待维护者审核 PR" },
-  approved: { color: "0e8a16", description: "已收录" },
-  rejected: { color: "d93f0b", description: "校验未通过或审核拒绝" },
-  "needs-review": { color: "c5def5", description: "需要维护者人工确认后才会处理" },
-  spam: { color: "000000", description: "格式不符的 Issue" },
-  transfer: { color: "5319e7", description: "插件转移申请" },
-  report: { color: "b60205", description: "插件举报" },
-  appeal: { color: "bfd4f2", description: "申诉" },
-  stale: { color: "cccccc", description: "插件仓库长期无法访问" }
-};
 
 interface Issue {
   number: number;
@@ -43,37 +32,11 @@ interface PullRequest {
   head: { ref: string; repo: { full_name: string } | null };
 }
 
-let labelsReady = false;
-
-async function ensureLabels(): Promise<void> {
-  if (labelsReady) return;
-  for (const [name, label] of Object.entries(LABELS)) {
-    try {
-      await github(`/repos/${marketRepo}/labels`, { method: "POST", body: { name, ...label } });
-    } catch (error) {
-      if (!(error instanceof GitHubError && error.status === 422)) throw error;
-    }
-  }
-  labelsReady = true;
-}
-
-async function addLabels(issue: number, labels: string[]): Promise<void> {
-  await ensureLabels();
-  await github(`/repos/${marketRepo}/issues/${issue}/labels`, { method: "POST", body: { labels } });
-}
-
-async function removeLabels(issue: number, labels: string[]): Promise<void> {
-  for (const label of labels) {
-    await orNull(github(`/repos/${marketRepo}/issues/${issue}/labels/${encodeURIComponent(label)}`, { method: "DELETE" }));
-  }
-}
-
-async function comment(issue: number, body: string): Promise<void> {
-  await github(`/repos/${marketRepo}/issues/${issue}/comments`, { method: "POST", body: { body } });
-}
-
-async function closeIssue(issue: number, reason: "completed" | "not_planned"): Promise<void> {
-  await github(`/repos/${marketRepo}/issues/${issue}`, { method: "PATCH", body: { state: "closed", state_reason: reason } });
+interface SubmissionCheck {
+  errors: string[];
+  notes: string[];
+  entry?: MarketSourceEntry;
+  preview?: string;
 }
 
 function parseRepoUrl(body: string): { owner: string; name: string } | null {
@@ -93,13 +56,6 @@ function parseTags(body: string): string[] {
         .filter(Boolean)
     )
   ];
-}
-
-async function overRateLimit(login: string, policy: MarketPolicy): Promise<boolean> {
-  const since = new Date(Date.now() - policy.rateLimit.windowHours * 3_600_000).toISOString().slice(0, 19);
-  const query = `repo:${marketRepo} is:issue author:${login} "[submission]" in:title created:>=${since}`;
-  const result = await github<{ total_count: number }>(`/search/issues?q=${encodeURIComponent(query)}`);
-  return result.total_count > policy.rateLimit.maxOpenSubmissionsPerUser;
 }
 
 function jsonEqual(a: unknown, b: unknown): boolean {
@@ -170,13 +126,11 @@ async function findPackageManifest(
   return manifests[0].data;
 }
 
-interface SubmissionCheck {
-  errors: string[];
-  notes: string[];
-  entry?: MarketSourceEntry;
-  preview?: string;
-}
-
+/**
+ * 校验一条收录申请。
+ * 只读 GitHub 和本地数据仓，不写任何东西：通过就返回待提交的条目和预览表格，
+ * 不通过就把原因堆进 errors。发 PR、打标签那些是调用方的事。
+ */
 async function checkSubmission(issue: Issue, policy: MarketPolicy, workDir: string): Promise<SubmissionCheck> {
   const errors: string[] = [];
   const notes: string[] = [];
@@ -252,6 +206,38 @@ async function checkSubmission(issue: Issue, policy: MarketPolicy, workDir: stri
     `| 标签 | ${tags.join(", ") || "无"} |`
   ].join("\n");
   return { errors, notes, entry, preview };
+}
+
+let labelsReady = false;
+
+async function ensureLabels(): Promise<void> {
+  if (labelsReady) return;
+  await ensureLabelsExist(marketRepo, Object.keys(LABELS));
+  labelsReady = true;
+}
+
+async function addLabels(issue: number, labels: string[]): Promise<void> {
+  await ensureLabels();
+  await github(`/repos/${marketRepo}/issues/${issue}/labels`, { method: "POST", body: { labels } });
+}
+
+async function removeLabels(issue: number, labels: string[]): Promise<void> {
+  for (const label of labels) {
+    await orNull(github(`/repos/${marketRepo}/issues/${issue}/labels/${encodeURIComponent(label)}`, { method: "DELETE" }));
+  }
+}
+
+// issue 的读写原语在 lib/issues/api.ts，这里只把仓库坐标绑上
+const comment = (issue: number, body: string): Promise<void> => commentIssue(marketRepo, issue, body);
+
+const closeIssue = (issue: number, reason: "completed" | "not_planned"): Promise<void> =>
+  closeIssueRequest(marketRepo, issue, reason);
+
+async function overRateLimit(login: string, policy: MarketPolicy): Promise<boolean> {
+  const since = new Date(Date.now() - policy.rateLimit.windowHours * 3_600_000).toISOString().slice(0, 19);
+  const query = `repo:${marketRepo} is:issue author:${login} "[submission]" in:title created:>=${since}`;
+  const result = await github<{ total_count: number }>(`/search/issues?q=${encodeURIComponent(query)}`);
+  return result.total_count > policy.rateLimit.maxOpenSubmissionsPerUser;
 }
 
 function base64(text: string): string {
