@@ -72,9 +72,15 @@ async function previousStats(): Promise<Record<string, PluginStats>> {
   if (previousApiUrl) {
     try {
       const response = await fetch(new URL("stats.json", previousApiUrl));
-      if (response.ok) loaded = ((await response.json()) as Record<string, PluginStats>) ?? {};
-    } catch {
-      // 读不到按空表处理 统计值退回上一次构建的记录
+      if (response.ok) {
+        loaded = ((await response.json()) as Record<string, PluginStats>) ?? {};
+      } else if (response.status !== 404) {
+        // 404 就是还没发过 属于正常情况 不用提醒
+        report.push(`- ⚠️ 读不到上一版 stats.json（HTTP ${response.status}），本轮同步失败的插件统计会归零`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      report.push(`- ⚠️ 读取上一版 stats.json 失败（${message}），本轮同步失败的插件统计会归零`);
     }
   }
   cachedPreviousStats = loaded;
