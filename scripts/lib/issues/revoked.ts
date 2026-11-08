@@ -88,16 +88,18 @@ function buildRevokedBody(
 ): string {
   const total = lines.length;
   const broken = lines.filter((line) => line.kind === "changed" || line.kind === "unknown").length;
+  // 插件名直接链到作者仓库 省得他再自己找一遍
+  const name = `[${entry.id}](${repo.html_url})`;
   let intro: string;
   if (broken === total) {
-    intro = `${entry.id} 有 ${total} 个版本的安装包在收录后被动过，内容和市场记录对不上。客户端安装时会核对 sha256，对不上就装不了，所以这些版本已经下架。`;
+    intro = `${name} 有 ${total} 个版本的安装包在收录后被动过，内容和市场记录对不上。客户端安装时会核对 sha256，对不上就装不了，所以这些版本已经下架。`;
   } else if (broken > 0) {
-    intro = `${entry.id} 有 ${total} 个版本的安装包在收录后被动过，其中 ${broken} 个的内容和市场记录对不上。客户端安装时会核对 sha256，对不上就装不了，所以这些版本已经下架。`;
+    intro = `${name} 有 ${total} 个版本的安装包在收录后被动过，其中 ${broken} 个的内容和市场记录对不上。客户端安装时会核对 sha256，对不上就装不了，所以这些版本已经下架。`;
   } else {
-    intro = `${entry.id} 有 ${total} 个版本的安装包在收录后被动过，市场已经不再展示这些版本。`;
+    intro = `${name} 有 ${total} 个版本的安装包在收录后被动过，市场已经不再展示这些版本。`;
   }
 
-  // 还有版本挂在 releases 页上 才值得劝他删掉；整个 release 都没了的没什么可删
+  // 附件还挂在 releases 页上 才值得劝他删掉；整个 release 都没了的没什么可删
   const cleanup = lines.some((line) => line.kind !== "deleted");
   // 插件整条消失时没有「其他版本」可言 只说以后的
   const scope = listed ? "其他已收录的版本" : "以后收录的版本";
@@ -109,14 +111,20 @@ function buildRevokedBody(
     "",
     ...lines.map((line) => line.text),
     "",
-    cleanup
-      ? "这些版本恢复不了 —— 市场不展示了，附件还挂在 releases 页上，建议删掉。"
-      : "这些版本恢复不了 —— 市场已经不展示了。",
-    "",
-    "往后发新版本就行，内部版本号比上一个大，市场会自动收录。",
+    ...(cleanup
+      ? [
+          `这些版本恢复不了。附件还挂在 [releases 页](${repo.html_url}/releases)上，把它们删掉之后，这条 issue 就会自动关闭。`,
+          "",
+          "想继续更新的话，往后发新版本就行，内部版本号比上一个大，市场会自动收录。"
+        ]
+      : [
+          "这些版本恢复不了 —— GitHub 上已经没有它们了，市场也不再展示。",
+          "",
+          "想继续更新的话，往后发新版本就行，内部版本号比上一个大，市场会自动收录。"
+        ]),
     ...paragraph(offlineNote(listed)),
     "",
-    `${scope}，附件别删，也别拿新包盖掉旧的 —— 盖掉对应的版本就下架了。`
+    `${scope}，附件可以不用删；删掉或者拿新包盖掉，对应的版本会下架。`
   ].join("\n");
 }
 
