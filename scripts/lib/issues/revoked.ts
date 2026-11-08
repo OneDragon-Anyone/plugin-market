@@ -79,6 +79,16 @@ function offlineNote(listed: boolean): string {
   return listed ? "" : "这个插件现在没有可用的版本，市场页面上暂时看不到它，发了新版本就会自动回来。";
 }
 
+/** 汇总里点一下就跳过去 光写编号还得自己去翻 */
+function issueRef(target: string, issue: number): string {
+  return `[\`#${issue}\`](https://github.com/${target}/issues/${issue})`;
+}
+
+/** 插件名链到作者仓库 和 issue 正文里的写法一致 */
+function pluginRef(entry: MarketSourceEntry, repo: GhRepo): string {
+  return `[\`${entry.id}\`](${repo.html_url})`;
+}
+
 /** 开新 issue 的正文：先说这批版本怎么了 再逐条列指纹 最后给作者出路 */
 function buildRevokedBody(
   entry: MarketSourceEntry,
@@ -145,6 +155,7 @@ export async function notifyRevoked(options: RevokedNoticeOptions): Promise<void
   if (entry.status !== "listed") return;
 
   const assetName = `${entry.id}.zip`;
+  const name = pluginRef(entry, repo);
   const revoked = Object.entries(lock.releases)
     .filter(([, record]) => record.revokedReason === "asset_changed")
     .sort((a, b) => a[1].versionCode - b[1].versionCode);
@@ -170,11 +181,11 @@ export async function notifyRevoked(options: RevokedNoticeOptions): Promise<void
       );
       if (appended) {
         lock.revokedNotified = revoked.map(([tag]) => tag);
-        log(`- 📮 \`${entry.id}\` ${revoked.length} 个版本已下架，已补进 issue #${lock.revokedIssue}`);
+        log(`- 📮 ${name} ${revoked.length} 个版本已下架，已补进 issue ${issueRef(target, lock.revokedIssue)}`);
         return;
       }
       // 404 说明那条被删了 只能另开 问题还在
-      log(`- ⚠️ \`${entry.id}\` 之前的通知 #${lock.revokedIssue} 已不存在，另开一条`);
+      log(`- ⚠️ ${name} 之前的通知 #${lock.revokedIssue} 已不存在，另开一条`);
     }
 
     // 首次通知 或者上一条已经判定解决 / 被删掉：新问题单独开一条
@@ -185,7 +196,7 @@ export async function notifyRevoked(options: RevokedNoticeOptions): Promise<void
     });
     lock.revokedNotified = revoked.map(([tag]) => tag);
     delete lock.revokedResolved;
-    log(`- 📮 \`${entry.id}\` ${revoked.length} 个版本已下架，已开 issue #${lock.revokedIssue}`);
+    log(`- 📮 ${name} ${revoked.length} 个版本已下架，已开 issue ${issueRef(target, lock.revokedIssue)}`);
     return;
   }
 
@@ -195,9 +206,9 @@ export async function notifyRevoked(options: RevokedNoticeOptions): Promise<void
   const resolve = async (note: string, marker: string, label: string): Promise<void> => {
     if (await tryCommentIssue(target, issue, note)) {
       await closeIssue(target, issue, "completed");
-      log(`- 📮 \`${entry.id}\` 问题已解决（${label}），issue #${issue} 已关闭`);
+      log(`- 📮 ${name} 问题已解决（${label}），issue ${issueRef(target, issue)} 已关闭`);
     } else {
-      log(`- ⚠️ \`${entry.id}\` 通知 #${issue} 已不存在，跳过关闭（${label}）`);
+      log(`- ⚠️ ${name} 通知 #${issue} 已不存在，跳过关闭（${label}）`);
     }
     lock.revokedResolved = marker;
   };
@@ -215,7 +226,7 @@ export async function notifyRevoked(options: RevokedNoticeOptions): Promise<void
   // 这行不写版本数和待办细节 免得和「恢复上架」混起来 具体事项看 issue
   for (const [tag] of revoked) {
     if (await assetStillThere(repo.full_name, releases, assetName, tag)) {
-      log(`- 📮 \`${entry.id}\` issue #${issue} 待作者处理`);
+      log(`- 📮 ${name} issue ${issueRef(target, issue)} 待作者处理`);
       return;
     }
   }
