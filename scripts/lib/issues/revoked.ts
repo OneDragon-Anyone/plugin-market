@@ -192,7 +192,7 @@ export async function notifyRevoked(options: RevokedNoticeOptions): Promise<void
   const issue = lock.revokedIssue;
   const resolve = async (note: string, reason: string): Promise<void> => {
     if (await tryCommentIssue(target, issue, note)) {
-      await closeIssue(target, issue);
+      await closeIssue(target, issue, "completed");
       log(`- 📮 \`${entry.id}\` revoked notice #${issue} closed (${reason})`);
     } else {
       log(`- ⚠️ \`${entry.id}\` 通知 #${issue} 已不存在，跳过关闭（${reason}）`);
