@@ -19,6 +19,8 @@ import type {
 } from "@/lib/types";
 import { assetDigest, GitHubError, type GhRelease, type GhRepo, github, githubText, listReleases, orNull, resolveTagCommit } from "./lib/github";
 import type { Lock, LockPlugin, LockRelease } from "./lib/lock";
+import { notifyRevoked } from "./lib/issues/revoked";
+import { openStaleIssue } from "./lib/issues/stale";
 import { renderSafeHtml } from "./lib/html";
 import { publishIndexFile, readIndexTarget } from "./lib/cnb";
 import { checkEntries, readEntryFiles, readPolicy, rootDir } from "./lib/market";
@@ -37,6 +39,9 @@ const previousApiBase = (process.env.PREVIOUS_API_URL ?? "").trim();
 const previousApiUrl = previousApiBase === "" ? "" : `${previousApiBase.replace(/\/+$/, "")}/`;
 /** 模板仓检出目录 与 validator 用的是同一个环境变量 */
 const templateDir = resolve(process.env.TEMPLATE_DIR ?? ".plugin-template");
+/** 自动 issue 要写进去的仓库 空串表示这轮不发（本地跑默认不发） */
+const issueTarget =
+  process.env.MARKET_OPEN_ISSUES === "true" ? (process.env.GITHUB_REPOSITORY ?? "").trim() : "";
 const runGit = promisify(execFile);
 const now = new Date();
 const report: string[] = [];
@@ -157,19 +162,6 @@ async function carryOver(previous: PreviousEntry, mirrors: MirrorRepo[]): Promis
   };
 }
 
-async function openStaleIssue(entry: MarketSourceEntry, days: number): Promise<number | undefined> {
-  const marketRepo = process.env.GITHUB_REPOSITORY;
-  if (!marketRepo || process.env.MARKET_OPEN_ISSUES !== "true") return undefined;
-  const issue = await github<{ number: number }>(`/repos/${marketRepo}/issues`, {
-    method: "POST",
-    body: {
-      title: `[stale] ${entry.id} 的仓库已连续 ${days} 天无法访问`,
-      body: `插件 \`${entry.id}\`（repoId ${entry.repoId}，提交时为 \`${entry.repo}\`）的仓库已连续 ${days} 天无法访问，网站已标记为 stale。\n\n请维护者确认后决定是否将 \`status\` 改为 \`suspended\`。`
-    }
-  });
-  return issue.number;
-}
-
 async function fallbackEntry(
   entry: MarketSourceEntry,
   lock: LockPlugin,
@@ -179,7 +171,7 @@ async function fallbackEntry(
   lock.unreachableSince ??= now.toISOString();
   const days = (now.getTime() - new Date(lock.unreachableSince).getTime()) / 86_400_000;
   const stale = days >= policy.repoUnreachableDays;
-  if (stale && !lock.staleIssue) lock.staleIssue = await openStaleIssue(entry, policy.repoUnreachableDays);
+  if (stale && !lock.staleIssue) lock.staleIssue = await openStaleIssue(entry, policy.repoUnreachableDays, issueTarget);
   report.push(`- ⚠️ \`${entry.id}\` ${warning.code}: ${warning.message}${stale ? "（stale）" : ""}`);
 
   const previous = await previousEntry(entry.id);
@@ -410,6 +402,8 @@ async function processPlugin(
 
   const warnings: PluginWarning[] = [];
   const releases = await listReleases(repo.full_name);
+  // 收录之前先记下市场已经收到的最大版本号 通知里用来判断作者是不是补发了新版本
+  const baseline = lock.maxVersionCode;
   await acceptNewReleases(entry, repo, releases, lock, policy, workDir, warnings);
 
   const live = new Map(releases.map((release) => [release.tag_name, release]));
@@ -418,6 +412,23 @@ async function processPlugin(
     .filter(([tag, locked]) => live.has(tag) && !locked.revokedAt)
     .map(([tag, locked]) => toRelease(tag, locked, live.get(tag)!, repo, mirrors))
     .sort((a, b) => b.versionCode - a.versionCode);
+  // 通知发不出去不该影响这轮构建 单独兜住
+  try {
+    await notifyRevoked({
+      target: issueTarget,
+      entry,
+      repo,
+      releases,
+      accepted,
+      baseline,
+      listed: accepted.length > 0,
+      lock,
+      log: (line) => report.push(line)
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    report.push(`- ⚠️ \`${entry.id}\` 下架通知发送失败: ${message}`);
+  }
   if (accepted.length === 0) {
     report.push(`- ⏸️ \`${entry.id}\` has no accepted release yet, not published`);
     return null;
