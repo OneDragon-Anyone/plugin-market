@@ -422,8 +422,6 @@ async function processPlugin(
 
   const warnings: PluginWarning[] = [];
   const releases = await listReleases(repo.full_name);
-  // 收录之前先记下市场已经收到的最大版本号 通知里用来判断作者是不是补发了新版本
-  const baseline = lock.maxVersionCode;
   await acceptNewReleases(entry, repo, releases, lock, policy, workDir, warnings);
 
   const live = new Map(releases.map((release) => [release.tag_name, release]));
@@ -439,8 +437,6 @@ async function processPlugin(
       entry,
       repo,
       releases,
-      accepted,
-      baseline,
       listed: accepted.length > 0,
       lock,
       log: (line) => report.push(line)
