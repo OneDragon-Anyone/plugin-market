@@ -16,45 +16,14 @@ import type {
   RiskTag,
   SearchEntry,
   WarningCode
-} from "../src/lib/types";
+} from "@/lib/types";
 import { type GhRelease, type GhRepo, github, githubText, listReleases, orNull, resolveTagCommit } from "./lib/github";
+import type { Lock, LockPlugin, LockRelease } from "./lib/lock";
 import { renderSafeHtml } from "./lib/html";
 import { publishIndexFile, readIndexTarget } from "./lib/cnb";
 import { checkEntries, readEntryFiles, readPolicy, rootDir } from "./lib/market";
 import { parseMirrors, type MirrorHost, type MirrorRepo } from "./lib/mirror";
 import { downloadAndValidate } from "./lib/validator";
-
-interface LockRelease {
-  version: string;
-  versionCode: number;
-  commit: string;
-  assetId: number;
-  assetName: string;
-  size: number;
-  sha256: string;
-  verifiedAt: string;
-  hasAppSetting: boolean;
-  cover: string;
-  manifest: Record<string, unknown>;
-}
-
-interface LockRejection {
-  assetId: number;
-  code: WarningCode;
-  message: string;
-}
-
-interface LockPlugin {
-  repoId: number;
-  repo: string;
-  maxVersionCode: number;
-  releases: Record<string, LockRelease>;
-  rejected: Record<string, LockRejection>;
-  unreachableSince?: string;
-  staleIssue?: number;
-}
-
-type Lock = Record<string, LockPlugin>;
 
 /** 构建过程中的条目 统计字段写盘时单独存进 stats.json */
 type BuiltPlugin = PluginEntry & PluginStats;

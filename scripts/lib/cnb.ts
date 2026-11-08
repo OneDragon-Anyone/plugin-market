@@ -4,7 +4,7 @@ import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import type { MarketPolicy } from "../../src/lib/types";
+import type { MarketPolicy } from "@/lib/types";
 
 const DEFAULT_API = "https://api.cnb.cool";
 const SITE_ROOT = "https://cnb.cool";
