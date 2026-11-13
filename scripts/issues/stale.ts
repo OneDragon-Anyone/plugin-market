@@ -1,10 +1,11 @@
-import type { MarketSourceEntry } from "@/lib/types";
-import { openIssue } from "./api";
-
 /**
- * 仓库连续多天不可访问 提醒维护者决定要不要标成 suspended。
- * target 是自动 issue 要写进去的仓库，空串表示这轮不发。
+ * 仓库失联提醒：插件仓库连续多天不可访问时，提醒维护者决定是否标成 suspended。
  */
+
+import type { MarketSourceEntry } from "@/lib/types";
+import { openIssue } from "../lib/github";
+
+/** target 为空串表示这轮不发 issue */
 export async function openStaleIssue(entry: MarketSourceEntry, days: number, target: string): Promise<number | undefined> {
   if (target === "") return undefined;
   return openIssue(target, {

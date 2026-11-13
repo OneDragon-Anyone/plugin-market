@@ -1,14 +1,21 @@
+/** 数据仓布局与条目校验：仓库路径、market/plugins/*.json 的读取与字段校验。 */
+
+import { checkMirror } from "./mirror";
+import { RISK_TAGS, type MarketPolicy, type MarketSourceEntry } from "@/lib/types";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { RISK_TAGS, type MarketPolicy, type MarketSourceEntry } from "@/lib/types";
-import { checkMirror } from "./mirror";
 
+// ---- 数据仓目录布局 ----
+
+/** 仓库根：本文件在 scripts/lib/ 下，往上两层 */
 export const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 // 数据仓（market/plugins、policy）与代码仓可以分离；本地开发时通过 MARKET_DATA_DIR 指向数据仓
 export const dataDir = resolve(process.env.MARKET_DATA_DIR ?? rootDir);
 export const pluginsDir = join(dataDir, "market", "plugins");
 export const policyPath = join(dataDir, "market", "policy.json");
+
+// ---- 条目读取与校验 ----
 
 export const ID_PATTERN = /^[a-z][a-z0-9_]*$/;
 export const TAG_PATTERN = /^[a-z0-9][a-z0-9-]{0,23}$/;

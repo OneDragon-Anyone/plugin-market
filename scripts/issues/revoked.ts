@@ -1,7 +1,12 @@
+/**
+ * 版本下架通知：安装包被改动或删除后，提醒作者清理 releases 页。
+ * 一条 issue 对应一个未解决的问题，后续同类情况以评论追加。
+ */
+
 import type { MarketSourceEntry } from "@/lib/types";
-import { assetDigest, type GhRelease, type GhRepo, github, orNull } from "../github";
-import type { LockPlugin, LockRelease } from "../lock";
-import { closeIssue, openIssue, tryCommentIssue } from "./api";
+import { assetDigest, github, orNull, closeIssue, openIssue, tryCommentIssue, type GhRelease, type GhRepo } from "../lib/github";
+import type { LockPlugin, LockRelease } from "../lib/lock";
+import { issueRef, paragraph, pluginRef } from "./body";
 
 export interface RevokedNoticeOptions {
   /** 自动 issue 要写进去的仓库 空串表示这轮不发 */
@@ -69,24 +74,9 @@ async function assetStillThere(repo: string, releases: GhRelease[], assetName: s
   return release.assets.some((item) => item.name === assetName && item.state === "uploaded");
 }
 
-/** 一段可能没有的说明 空的连前面的空行一起省掉 开新条和补评论共用这一处 */
-function paragraph(text: string): string[] {
-  return text === "" ? [] : ["", text];
-}
-
 /** 全下架时插件整条从市场消失 得说一句 免得作者以为被删了 */
 function offlineNote(listed: boolean): string {
   return listed ? "" : "这个插件现在没有可用的版本，市场页面上暂时看不到它，发了新版本就会自动回来。";
-}
-
-/** 汇总里点一下就跳过去 光写编号还得自己去翻 */
-function issueRef(target: string, issue: number): string {
-  return `[\`#${issue}\`](https://github.com/${target}/issues/${issue})`;
-}
-
-/** 插件名链到作者仓库 和 issue 正文里的写法一致 */
-function pluginRef(entry: MarketSourceEntry, repo: GhRepo): string {
-  return `[\`${entry.id}\`](${repo.html_url})`;
 }
 
 /** 开新 issue 的正文：先说这批版本怎么了 再逐条列指纹 最后给作者出路 */
