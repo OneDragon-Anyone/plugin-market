@@ -1,6 +1,6 @@
 /**
  * 构建入口：读数据仓条目 → 逐个插件同步 → 写出索引与封面 → 打印构建摘要。
- * 收录、扫描、索引回落、摘要都在这一个文件里，按下面的分节顺序读即可。
+ * 收录、索引回落、摘要都在这一个文件里，按下面的分节顺序读即可。
  */
 
 import { notifyRevoked } from "./issues/revoked";
@@ -10,9 +10,6 @@ import { createBuildContext, lockDirectories, readLock, type BuiltPlugin, type L
 import { checkEntries, readEntryFiles, readPolicy } from "./lib/market";
 import { parseMirrors, buildSources, githubAssetUrl, type MirrorRepo } from "./lib/mirror";
 import { downloadAndValidate } from "./lib/validator";
-import { formatFindings } from "./scan/client";
-import { loadHostPackages } from "./scan/host_packages";
-import { notifyPendingSecurityReviews, scanExistingReleases, scanVersion } from "./scan/policy";
 import { type MarketSourceEntry, type PluginCompatibility, type PluginEntry, type PluginWarning, type RiskTag, type PluginRelease, type WarningCode, type MarketIndex, type PluginStats, type SearchEntry, type MarketPolicy } from "@/lib/types";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -26,13 +23,8 @@ import { renderSafeHtml } from "./lib/html";
 
 async function main(): Promise<void> {
   const policy = await readPolicy();
-  const { lockDir, lockPath } = lockDirectories();
-  // 主程序环境里已经装好的包，插件直接 import 属正常用法；清单跟着主程序的 uv.lock 走
-  const hostNotes: string[] = [];
-  const hostPackages = await loadHostPackages(lockDir, (line) => hostNotes.push(line));
-  const ctx = createBuildContext(policy, await readLock(lockPath), hostPackages);
-  ctx.report.push(`- ℹ️ 安全扫描已启用，主程序包 ${hostPackages.length} 个`);
-  ctx.report.push(...hostNotes);
+  const { lockPath } = lockDirectories();
+  const ctx = createBuildContext(policy, await readLock(lockPath));
 
   // 配了索引镜像但凭证不全时 静默跳过会让人以为镜像在工作；主动关闭的不报
   if (
@@ -44,10 +36,7 @@ async function main(): Promise<void> {
   }
   const { entries, errors } = checkEntries(await readEntryFiles(), policy);
   if (errors.length > 0) throw new Error(`market entries are invalid:\n${errors.join("\n")}`);
-  // 插件可以依赖市场里其它插件，扫描时把这些包名一并放行
-  ctx.knownPlugins = entries.map((entry) => entry.id);
 
-  await ctx.scanCache.load();
   const workDir = await mkdtemp(join(tmpdir(), "zzzod-market-"));
   const plugins: BuiltPlugin[] = [];
   try {
@@ -113,7 +102,6 @@ export async function processPlugin(
   const warnings: PluginWarning[] = [];
   const releases = await listReleases(repo.full_name);
   await acceptNewReleases(ctx, entry, repo, releases, lock, workDir, warnings);
-  await scanExistingReleases(ctx, entry, repo, lock, workDir, warnings);
 
   const live = new Map(releases.map((release) => [release.tag_name, release]));
   const mirrors = parseMirrors(entry.mirror);
@@ -136,8 +124,6 @@ export async function processPlugin(
     const message = error instanceof Error ? error.message : String(error);
     ctx.report.push(`- ⚠️ \`${entry.id}\` 下架通知发送失败: ${message}`);
   }
-  // 收录和扫描都落定之后再补发通知：发失败不影响本轮收录，下轮还会重试
-  await notifyPendingSecurityReviews(ctx, entry, repo, lock);
   if (accepted.length === 0) {
     ctx.report.push(`- ⏸️ \`${entry.id}\` has no accepted release yet, not published`);
     return null;
@@ -291,15 +277,6 @@ export async function acceptNewReleases(
       const codes = result.errors.map((error) => `${error.code} ${error.detail}`).join("; ");
       reject(result.errors.some((error) => error.code === "ID_MISMATCH") ? "id_mismatch" : "invalid_package", codes);
       continue;
-    }
-
-    // 新版本在这一步扫一次，结果按 sha256 存进缓存，之后每轮直接复用
-    const scan = await scanVersion(ctx, entry.id, tag, sha256, async () => zipPath);
-    if (scan) {
-      if (scan.summary.block > 0) {
-        reject("invalid_package", `安全扫描拦截：${formatFindings(scan, "block")}`);
-        continue;
-      }
     }
 
     const versionCode = result.manifest.versionCode as number;
