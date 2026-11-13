@@ -60,7 +60,16 @@ def scan_python_imports(
             root = module.split(".")[0]
             # 网络模块多半是标准库，要先判断，不能被白名单先放过去
             if root in NETWORK_ROOTS:
-                out.append(finding("NETWORK_MODULE", REVIEW, STATIC, file, line, f"使用网络模块 {root}，需确认与申报的风险标签一致"))
+                out.append(
+                    finding(
+                        "NETWORK_MODULE",
+                        REVIEW,
+                        STATIC,
+                        file,
+                        line,
+                        f"使用网络模块 {root}，会联网就在 manifest 里申报 network，不联网去掉这处调用",
+                    )
+                )
                 continue
             if (
                 root in STDLIB_ROOTS
@@ -71,7 +80,16 @@ def scan_python_imports(
                 or root in plugin_roots
             ):
                 continue
-            out.append(finding("THIRD_PARTY_IMPORT", REVIEW, DEPENDENCY, file, line, f"引用第三方包 {root}，需确认主程序已内置"))
+            out.append(
+                finding(
+                    "THIRD_PARTY_IMPORT",
+                    REVIEW,
+                    DEPENDENCY,
+                    file,
+                    line,
+                    f"主程序未内置 {root}，插件需随包提供或改为可选导入，否则用户机器上这处 import 会失败",
+                )
+            )
     return out
 
 
@@ -83,9 +101,13 @@ def scan_package_files(file: str) -> list[dict[str, Any]]:
     suffix = path.suffix.lower()
 
     if suffix in SCRIPT_SUFFIXES:
-        out.append(finding("SCRIPT_IN_PACKAGE", REVIEW, DEPENDENCY, file, 0, f"包内脚本 {suffix} 需人工确认用途"))
+        out.append(
+            finding("SCRIPT_IN_PACKAGE", REVIEW, DEPENDENCY, file, 0, f"包内带 {suffix} 脚本，说明用途或移出安装包；主程序不需要外部脚本")
+        )
     if name in DEPENDENCY_FILES or (name.startswith("requirements") and name.endswith(".txt")):
-        out.append(finding("DEPENDENCY_FILE", BLOCK, DEPENDENCY, file, 0, "包内不允许携带依赖清单"))
-    if any(part.lower() in {"site-packages", "node_modules", "vendor", "__pycache__"} for part in path.parts[1:]):
-        out.append(finding("BUNDLED_DEPENDENCY_DIR", BLOCK, DEPENDENCY, file, 0, "包内不允许捆绑依赖目录"))
+        out.append(finding("DEPENDENCY_FILE", BLOCK, DEPENDENCY, file, 0, f"包内带依赖清单 {name}，移除；依赖由主程序统一提供"))
+    # 目录名逐段比，从包根开始算：插件包的 plugin.json 就在根上，没有外层包装目录，
+    # 只从第二段看会漏掉 vendor/、site-packages/ 这种直接放在根上的情况
+    if any(part.lower() in {"site-packages", "node_modules", "vendor", "__pycache__"} for part in path.parts[:-1]):
+        out.append(finding("BUNDLED_DEPENDENCY_DIR", BLOCK, DEPENDENCY, file, 0, "包内捆绑了依赖目录，移除；依赖由主程序统一提供"))
     return out

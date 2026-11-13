@@ -1,9 +1,9 @@
 /**
- * 扫描器的 TS 侧：起 Python 子进程跑 scan_plugin.py，结果按 sha256 缓存。
+ * 扫描器的 TS 侧：起 Python 子进程跑 scan_plugin.py。
+ * 只在收录时扫一次，结论进收录 issue 的评论；之后发的版本不再复查。结果不落缓存。
  */
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { lastJsonLine, runPython } from "../lib/validator";
 const scannerPath = resolve(dirname(fileURLToPath(import.meta.url)), "scan_plugin.py");
@@ -15,6 +15,7 @@ export interface ScanFinding {
   category: string;
   file: string;
   line: number;
+  /** 写成「问题 + 怎么做」，原样进 issue 评论 */
   detail: string;
 }
 
@@ -25,31 +26,21 @@ export interface ScanReport {
   summary: { block: number; review: number };
 }
 
-export interface ScanCacheEntry {
-  id: string;
-  tag: string;
-  scannedAt: string;
-  status: "scanned" | "unavailable";
-  report?: ScanReport;
-}
-
-interface ScanCacheFile {
-  results: Record<string, ScanCacheEntry>;
-}
+export type ScanCheck = "static" | "dependency" | "malware";
 
 export interface ScanOptions {
+  /** 只跑这几类，不给就三类都跑 */
+  checks?: ScanCheck[];
   /** 主程序环境里已经装好的 import 名，不当作第三方依赖 */
   hostPackages?: string[];
   /** 市场上已收录的插件 id，插件之间互相 import 不算第三方依赖 */
   knownPlugins?: string[];
 }
 
-/**
- * 扫描器本身出问题时直接抛，调度层记一条「跳过」并且不写缓存，下轮重试。
- * 早先这里返回一份带 review 的假报告，会被当成正常结果缓存下来，那个包就再也不会重扫。
- */
+/** 扫描器本身出问题时直接抛，调用方决定是拦下还是记一条提示 */
 export async function scanZip(zipPath: string, options: ScanOptions = {}): Promise<ScanReport> {
   const args = ["--zip", zipPath];
+  if (options.checks?.length) args.push("--checks", options.checks.join(","));
   if (options.hostPackages?.length) args.push("--host-packages", options.hostPackages.join(","));
   if (options.knownPlugins?.length) args.push("--known-plugins", options.knownPlugins.join(","));
   const run = await runPython(scannerPath, args);
@@ -62,55 +53,29 @@ export async function scanZip(zipPath: string, options: ScanOptions = {}): Promi
   return report;
 }
 
-export function formatFindings(report: ScanReport, severity: "block" | "review", limit = 5): string {
-  const hits = report.findings.filter((item) => item.severity === severity);
-  const shown = hits
-    .slice(0, limit)
-    .map((item) => `${item.category}/${item.code} ${item.file}${item.line ? `:${item.line}` : ""}`);
-  if (hits.length > limit) shown.push(`等 ${hits.length} 条`);
-  return shown.join("; ");
+/**
+ * 一条命中项一行：位置 + 为什么算问题 + 该怎么改。
+ * 同一个包、同一条规则在多处命中时合成一行，只把位置串起来——不合并的话
+ * 一个包 import 三次就占三行，注释区读不下去。
+ */
+export function findingLines(report: ScanReport, severity: "block" | "review"): string[] {
+  const groups = new Map<string, { sample: ScanFinding; places: string[] }>();
+  for (const item of report.findings) {
+    if (item.severity !== severity) continue;
+    const place = `${item.file}${item.line ? `:${item.line}` : ""}`;
+    const key = `${item.category}/${item.code} ${item.detail}`;
+    const group = groups.get(key);
+    if (group) group.places.push(place);
+    else groups.set(key, { sample: item, places: [place] });
+  }
+  return [...groups.values()].map(({ sample, places }) => {
+    const shown = places.slice(0, 5).join("、");
+    const more = places.length > 5 ? ` 等 ${places.length} 处` : "";
+    return `\`${sample.category}/${sample.code}\` ${shown}${more} — ${sample.detail}`;
+  });
 }
 
-/** 构建报告里说清这份扫描覆盖了什么 */
+/** 说清这份结论覆盖了什么，免得人以为整包都被检查过 */
 export function describeScan(report: ScanReport): string {
   return `扫过 ${report.scannedFiles} 个文件（Python ${report.pythonFiles}）`;
-}
-
-/**
- * 扫描结果按 zip 的 sha256 存 lock 分支。同一个 tag 发布后内容不可变，
- * 所以同一个指纹永远只需扫一次，命中就不下载不重扫。
- * 规则改了想重跑历史版本时，删掉缓存文件即可。
- */
-export class ScanCache {
-  private results: Record<string, ScanCacheEntry> = {};
-
-  constructor(private readonly path: string) {}
-
-  get size(): number {
-    return Object.keys(this.results).length;
-  }
-
-  async load(): Promise<void> {
-    try {
-      const parsed = JSON.parse(await readFile(this.path, "utf-8")) as ScanCacheFile;
-      this.results = parsed.results ?? {};
-    } catch {
-      this.results = {};
-    }
-  }
-
-  get(sha256: string): ScanCacheEntry | null {
-    return this.results[sha256] ?? null;
-  }
-
-  async set(sha256: string, entry: ScanCacheEntry): Promise<void> {
-    this.results[sha256] = entry;
-    await mkdir(dirname(this.path), { recursive: true });
-    const file: ScanCacheFile = { results: this.results };
-    await writeFile(this.path, `${JSON.stringify(file, null, 2)}\n`, "utf-8");
-  }
-}
-
-export function scanCachePath(lockDir: string): string {
-  return join(lockDir, "scan-results.json");
 }

@@ -6,9 +6,11 @@
 import { github, orNull, LABELS, closeIssue as closeIssueRequest, commentIssue, ensureLabels as ensureRepoLabels, type GhRepo, GitHubError } from "./lib/github";
 import { readPolicy, ID_PATTERN, MAX_TAGS, TAG_PATTERN, formatEntry, pluginsDir } from "./lib/market";
 import { checkLatestRelease } from "./lib/validator";
+import { loadHostPackages } from "./scan/host_packages";
+import { describeScan, findingLines, scanZip, type ScanCheck, type ScanReport } from "./scan/client";
 import { type MarketPolicy, type MarketSourceEntry } from "@/lib/types";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -246,6 +248,8 @@ export interface SubmissionCheck {
   notes: string[];
   entry?: MarketSourceEntry;
   preview?: string;
+  /** 收录前那次安全扫描的结论；没跑起来是 null，跟着 notes 一起交给维护者 */
+  scan?: ScanReport | null;
 }
 
 export type ReadyCheck = Required<Pick<SubmissionCheck, "entry" | "preview">> & SubmissionCheck;
@@ -338,9 +342,45 @@ async function findPackageManifest(
 }
 
 /**
+ * 收录前对安装包做一次完整扫描，三类规则都跑。
+ * 主程序包清单取不到就只跳过依赖这一类——那时候所有自带包都会被当成第三方，
+ * 报出来全是噪音；静态扫描和恶意特征扫描照查，不依赖那份清单。
+ */
+async function scanSubmission(workDir: string, zipPath: string, notes: string[]): Promise<ScanReport | null> {
+  const hostPackages = await loadHostPackages(workDir, () => {});
+  const checks: ScanCheck[] = ["static", "malware"];
+  if (hostPackages.length > 0) checks.unshift("dependency");
+  else notes.push("主程序自带包清单没取到，这次没查第三方依赖，其余检查照做了。");
+  const knownPlugins = (await readdir(pluginsDir).catch(() => [] as string[]))
+    .filter((file) => file.endsWith(".json"))
+    .map((file) => file.slice(0, -".json".length));
+  try {
+    return await scanZip(zipPath, { checks, hostPackages, knownPlugins });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    notes.push(`安全扫描没跑起来（${message.slice(0, 160)}），合并前请自己看一下源码。`);
+    return null;
+  }
+}
+
+/** 扫描结论分两段列：确定的问题要改，其余的合并前确认一下 */
+function scanSection(scan: ScanReport | null | undefined): string[] {
+  if (!scan) return [];
+  const blocks = findingLines(scan, "block");
+  const reviews = findingLines(scan, "review");
+  if (blocks.length + reviews.length === 0) return [];
+  return [
+    ...(blocks.length > 0 ? ["**扫描：必须处理**", "", ...blocks.map((line) => `- ${line}`), ""] : []),
+    ...(reviews.length > 0 ? ["**扫描：需要确认**", "", ...reviews.map((line) => `- ${line}`), ""] : []),
+    `扫描覆盖：${describeScan(scan)}。`
+  ];
+}
+
+/**
  * 校验一条收录申请。
- * 只读 GitHub 和本地数据仓，不写任何东西：通过就返回待提交的条目和预览表格，
- * 不通过就把原因堆进 errors。发 PR、打标签那些是调用方的事。
+ * 只读 GitHub 和本地数据仓，除了在临时目录里下载附件、写一份主程序包清单快照，不写任何东西：
+ * 通过就返回待提交的条目、预览表格和扫描结论，不通过就把原因堆进 errors。发 PR、打标签那些是调用方的事。
+ * 扫描结论不参与这个判定 —— 它只写进评论给维护者看，拦不拦由人决定。
  */
 export async function checkSubmission(
   issue: Issue,
@@ -393,7 +433,10 @@ export async function checkSubmission(
 
   const release = await checkLatestRelease(repo.full_name, id, policy, workDir);
   errors.push(...release.errors);
-  if (errors.length > 0 || !release.release || !release.check) return { errors, notes };
+  if (errors.length > 0 || !release.release || !release.check || !release.zipPath) return { errors, notes };
+
+  // 扫描结论只进评论，不进 errors：它说明这个包有什么问题，收录与否仍由自动校验和维护者决定
+  const scan = await scanSubmission(workDir, release.zipPath, notes);
 
   const zipManifest = release.check.result.manifest;
   const entry: MarketSourceEntry = {
@@ -420,7 +463,7 @@ export async function checkSubmission(
     `| 不可变 Release | ${release.release.immutable ? "是" : "否"} |`,
     `| 标签 | ${tags.join(", ") || "无"} |`
   ].join("\n");
-  return { errors, notes, entry, preview };
+  return { errors, notes, entry, preview, scan };
 }
 
 function base64(text: string): string {
@@ -432,11 +475,16 @@ export async function openPullRequest(ctx: BotContext, issue: Issue, check: Read
   const entry = check.entry;
   const branch = `submission/${entry.id}`;
   const owner = ctx.marketRepo.split("/")[0];
+  // 扫描结论跟着收录结论一起说，不另开 issue；命中了也不拦 PR
+  const scanLines = scanSection(check.scan);
   const open = await github<{ number: number }[]>(
     `/repos/${ctx.marketRepo}/pulls?state=open&head=${owner}:${branch}`
   );
   if (open.length > 0) {
-    await ctx.comment(issue.number, `插件 \`${entry.id}\` 已有审核中的 PR #${open[0].number}，请等待维护者处理。`);
+    await ctx.comment(
+      issue.number,
+      [`插件 \`${entry.id}\` 已有审核中的 PR #${open[0].number}，请等待维护者处理。`, ...(scanLines.length > 0 ? ["", ...scanLines] : [])].join("\n")
+    );
     return;
   }
 
@@ -476,6 +524,7 @@ export async function openPullRequest(ctx: BotContext, issue: Issue, check: Read
     check.preview,
     "",
     ...(check.notes.length > 0 ? ["**需要人工确认**", "", ...check.notes.map((note) => `- ${note}`), ""] : []),
+    ...(scanLines.length > 0 ? [scanLines.join("\n"), ""] : []),
     "**审核清单**",
     "",
     "- [ ] README 说明清楚功能和使用方式",
@@ -508,7 +557,10 @@ export async function openPullRequest(ctx: BotContext, issue: Issue, check: Read
   await ctx.addLabels(issue.number, ["pending"]);
   await ctx.comment(
     issue.number,
-    `校验通过，已创建 PR #${pr.number}，等待维护者审核。合并后插件会在几分钟内出现在网站上。`
+    [
+      `校验通过，已创建 PR #${pr.number}，等待维护者审核。合并后插件会在几分钟内出现在网站上。`,
+      ...(scanLines.length > 0 ? ["", ...scanLines] : [])
+    ].join("\n")
   );
 }
 
