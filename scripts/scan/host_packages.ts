@@ -17,7 +17,7 @@ const MAX_LOCK_BYTES = 4 * 1024 * 1024;
 
 /**
  * 发行名与 import 名对不上的包，其余按小写、分隔符归一（charset-normalizer → charset_normalizer）。
- * 这张表只在主程序换了包名时才会变；漏写只会多报一条待确认，不会漏报。
+ * 这张表只在主程序换了包名时才会变；漏写只会多报一条第三方 import，不会漏报。
  */
 const MODULE_OVERRIDES: Record<string, string[]> = {
   "opencv-python": ["cv2"],

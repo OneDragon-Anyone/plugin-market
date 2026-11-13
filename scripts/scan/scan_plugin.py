@@ -1,7 +1,7 @@
 """扫描入口：解开 ZIP，按类别调用各扫描模块，汇总成一份 JSON 报告。
 
-由 scan/client.ts 以子进程调用，stdout 最后一行是报告 JSON。
-结果按包的 sha256 缓存，同一个包只扫一次；规则改了删掉 .lock/scan-results.json 即可整体重扫。
+由 scan/client.ts 以子进程调用，stdout 最后一行是报告 JSON，退出码固定 0。
+收录时扫一次，静态扫描、依赖扫描、恶意特征扫描三类都跑，用 --checks 选类别。
 
 各类别分文件维护，规则数据也放在各自的模块里：
 - static_scan.py      Python 源码 AST：动态执行、命令执行、凭据访问、混淆
@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -39,9 +38,11 @@ def scan_zip(
     zip_path: str,
     plugin_roots: set[str] | None = None,
     host_roots: set[str] | None = None,
+    checks: set[str] | None = None,
 ) -> dict[str, Any]:
     plugin_roots = plugin_roots or set()
     host_roots = host_roots or set()
+    checks = checks or {"static", "dependency", "malware"}
     findings: list[dict[str, Any]] = []
     scanned = 0
     python_files = 0
@@ -69,26 +70,33 @@ def scan_zip(
                 with archive.open(info) as stream:
                     data = stream.read(MAX_SCAN_BYTES)
             except (RuntimeError, zipfile.BadZipFile, OSError) as exc:
-                findings.append(finding("UNREADABLE_ENTRY", BLOCK, SCANNER, name, 0, f"无法读取：{exc}"))
+                findings.append(finding("UNREADABLE_ENTRY", BLOCK, SCANNER, name, 0, f"条目无法解压（{exc}），重新打包后发版"))
                 continue
 
-            findings.extend(malware_scan.scan_executable(name, data))
-            findings.extend(dependency_scan.scan_package_files(name))
-            findings.extend(malware_scan.scan_signatures(name, data))
+            if "malware" in checks:
+                findings.extend(malware_scan.scan_executable(name, data))
+                findings.extend(malware_scan.scan_signatures(name, data))
+            if "dependency" in checks:
+                findings.extend(dependency_scan.scan_package_files(name))
             suffix = PurePosixPath(name).suffix.lower()
             if suffix == ".py":
                 python_files += 1
-                tree, syntax_error = parse_python(name, data)
-                if syntax_error:
-                    findings.append(syntax_error)
-                else:
-                    findings.extend(static_scan.scan_python_calls(name, data.decode("utf-8", "replace"), tree))
-                    findings.extend(
-                        dependency_scan.scan_python_imports(name, tree, package_roots, host_roots, plugin_roots)
-                    )
-                findings.extend(malware_scan.scan_text(name, data))
+                if "static" in checks or "dependency" in checks:
+                    tree, syntax_error = parse_python(name, data)
+                    if syntax_error:
+                        findings.append(syntax_error)
+                    else:
+                        if "static" in checks:
+                            findings.extend(static_scan.scan_python_calls(name, data.decode("utf-8", "replace"), tree))
+                        if "dependency" in checks:
+                            findings.extend(
+                                dependency_scan.scan_python_imports(name, tree, package_roots, host_roots, plugin_roots)
+                            )
+                if "malware" in checks:
+                    findings.extend(malware_scan.scan_text(name, data))
             elif suffix in TEXT_SUFFIXES:
-                findings.extend(malware_scan.scan_text(name, data))
+                if "malware" in checks:
+                    findings.extend(malware_scan.scan_text(name, data))
 
             if len(findings) >= MAX_FINDINGS:
                 truncated = True
@@ -99,7 +107,7 @@ def scan_zip(
         unique.setdefault((item["code"], item["file"], item["line"]), item)
     findings = list(unique.values())[:MAX_FINDINGS]
     if truncated:
-        findings.append(finding("SCAN_TRUNCATED", REVIEW, SCANNER, "", 0, f"命中项超过 {MAX_FINDINGS} 条，已截断"))
+        findings.append(finding("SCAN_TRUNCATED", REVIEW, SCANNER, "", 0, f"命中项超过 {MAX_FINDINGS} 条已截断，先处理列出的项再发版"))
 
     return {
         "scannedFiles": scanned,
@@ -112,7 +120,10 @@ def scan_zip(
     }
 
 
-def main() -> int:
+def main() -> None:
+    """结论全在 JSON 里：可能是 error，也可能是 block 命中。
+    想让扫描拦住流程的话按 summary 判定，别指望调用方去看退出码。
+    """
     parser = argparse.ArgumentParser(description="Scan a plugin release ZIP without executing its code.")
     parser.add_argument("--zip", required=True, help="Path to the release <id>.zip")
     parser.add_argument(
@@ -125,22 +136,27 @@ def main() -> int:
         default="",
         help="Comma separated ids of plugins already in the market; importing them is not a third-party dependency",
     )
+    parser.add_argument(
+        "--checks",
+        default="static,dependency,malware",
+        help="Comma separated scan categories to run; default is all of them",
+    )
     args = parser.parse_args()
 
     path = Path(args.zip)
     if not path.is_file():
         print(json.dumps({"error": f"file not found: {path}"}))
-        return 2
+        return
     plugin_roots = {item.strip() for item in args.known_plugins.split(",") if item.strip()}
     host_roots = {item.strip() for item in args.host_packages.split(",") if item.strip()}
+    checks = {item.strip() for item in args.checks.split(",") if item.strip()}
     try:
-        report = scan_zip(str(path), plugin_roots, host_roots)
+        report = scan_zip(str(path), plugin_roots, host_roots, checks)
     except (zipfile.BadZipFile, OSError) as exc:
         print(json.dumps({"error": str(exc)}))
-        return 2
+        return
     print(json.dumps(report, ensure_ascii=False))
-    return 1 if report["summary"]["block"] > 0 else 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

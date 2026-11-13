@@ -93,6 +93,8 @@ export interface LatestReleaseCheck {
   errors: string[];
   release?: GhRelease;
   check?: ZipCheck;
+  /** 下载到本地的附件，调用方可以直接拿它做安全扫描，不用再下一遍 */
+  zipPath?: string;
 }
 
 export async function checkLatestRelease(
@@ -111,11 +113,12 @@ export async function checkLatestRelease(
   if (asset.size > policy.maxZipBytes) {
     return { errors: [`\`${assetName}\` 大小 ${asset.size} 超过上限 ${policy.maxZipBytes}。`], release };
   }
-  const check = await downloadAndValidate(asset.browser_download_url, join(workDir, `${id}-${release.tag_name}.zip`), {
+  const zipPath = join(workDir, `${id}-${release.tag_name}.zip`);
+  const check = await downloadAndValidate(asset.browser_download_url, zipPath, {
     expectId: id,
     expectTag: release.tag_name,
     policy
   });
   const errors = check.result.errors.map((error) => `\`${error.code}\` ${error.detail}`);
-  return { errors, release, check };
+  return { errors, release, check, zipPath };
 }
