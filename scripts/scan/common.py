@@ -22,7 +22,7 @@ REVIEW = "review"
 # 报告里的 category 取值；TS 侧按字符串读取，新增类别不必同步改类型
 STATIC = "static"
 DEPENDENCY = "dependency"
-# 恶意特征扫描的类别沿用此名；已缓存报告里的 category 也是这个值，改名会让旧结果对不上
+# 恶意特征扫描的类别，TS 侧按这个值挑出发 issue 的命中项
 VIRUS = "virus"
 # 扫描器自身的问题（读不到条目、命中过多被截断）不算任何一类规则命中
 SCANNER = "scanner"
@@ -35,9 +35,17 @@ TEXT_SUFFIXES = {
 
 
 def finding(
-    code: str, severity: str, category: str, file: str, line: int, detail: str
+    code: str,
+    severity: str,
+    category: str,
+    file: str,
+    line: int,
+    detail: str,
 ) -> dict[str, Any]:
-    """一条命中项。所有扫描模块都通过它产出，字段结构保持一致。"""
+    """一条命中项。所有扫描模块都通过它产出，字段结构保持一致。
+
+    detail 写成「问题 + 怎么做」，会原样进收录 issue 的评论。
+    """
     return {
         "code": code,
         "severity": severity,
@@ -89,4 +97,11 @@ def parse_python(file: str, data: bytes) -> tuple[ast.AST | None, dict[str, Any]
     try:
         return ast.parse(source, filename=file), None
     except SyntaxError as exc:
-        return None, finding("PY_SYNTAX_ERROR", REVIEW, STATIC, file, exc.lineno or 0, exc.msg)
+        return None, finding(
+            "PY_SYNTAX_ERROR",
+            REVIEW,
+            STATIC,
+            file,
+            exc.lineno or 0,
+            f"语法错误无法解析（{exc.msg}），修正后重新发版",
+        )

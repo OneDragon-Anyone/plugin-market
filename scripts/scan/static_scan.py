@@ -31,21 +31,21 @@ DECODE_CALLS = {
 }
 EXEC_CALLS = {"eval", "exec", "compile", "__import__"}
 REVIEW_CALLS: dict[str, tuple[str, str]] = {
-    "eval": ("DYNAMIC_EVAL", "eval() 动态执行代码"),
-    "exec": ("DYNAMIC_EXEC", "exec() 动态执行代码"),
-    "compile": ("DYNAMIC_COMPILE", "compile() 动态编译代码"),
-    "__import__": ("DYNAMIC_IMPORT", "__import__() 动态导入"),
-    "os.system": ("SHELL_EXEC", "os.system() 执行系统命令"),
-    "os.popen": ("SHELL_EXEC", "os.popen() 执行系统命令"),
-    "pty.spawn": ("SHELL_EXEC", "pty.spawn() 启动交互式 shell"),
-    "subprocess.run": ("SHELL_EXEC", "subprocess 启动子进程"),
-    "subprocess.Popen": ("SHELL_EXEC", "subprocess 启动子进程"),
-    "subprocess.call": ("SHELL_EXEC", "subprocess 启动子进程"),
-    "subprocess.check_output": ("SHELL_EXEC", "subprocess 启动子进程"),
-    "pickle.loads": ("UNSAFE_DESERIALIZE", "pickle.loads() 反序列化可执行对象"),
-    "marshal.loads": ("UNSAFE_DESERIALIZE", "marshal.loads() 反序列化代码对象"),
-    "os.dup2": ("FD_REDIRECT", "重定向文件描述符"),
-    "shutil.rmtree": ("RECURSIVE_DELETE", "递归删除目录"),
+    "eval": ("DYNAMIC_EVAL", "eval() 动态执行代码，改成直接调用；确需动态执行请在提交说明里写清用途"),
+    "exec": ("DYNAMIC_EXEC", "exec() 动态执行代码，改成直接调用；确需动态执行请在提交说明里写清用途"),
+    "compile": ("DYNAMIC_COMPILE", "compile() 动态编译代码，改成直接调用；确需动态执行请在提交说明里写清用途"),
+    "__import__": ("DYNAMIC_IMPORT", "__import__() 动态导入，改成普通 import；确需按名加载请说明来源"),
+    "os.system": ("SHELL_EXEC", "os.system() 执行系统命令，说明调的是什么；用户机器上不一定有"),
+    "os.popen": ("SHELL_EXEC", "os.popen() 执行系统命令，说明调的是什么；用户机器上不一定有"),
+    "pty.spawn": ("SHELL_EXEC", "pty.spawn() 启动交互式 shell，插件用不到，移除"),
+    "subprocess.run": ("SHELL_EXEC", "subprocess 启动子进程，说明调用什么程序；用户机器上不一定有"),
+    "subprocess.Popen": ("SHELL_EXEC", "subprocess 启动子进程，说明调用什么程序；用户机器上不一定有"),
+    "subprocess.call": ("SHELL_EXEC", "subprocess 启动子进程，说明调用什么程序；用户机器上不一定有"),
+    "subprocess.check_output": ("SHELL_EXEC", "subprocess 启动子进程，说明调用什么程序；用户机器上不一定有"),
+    "pickle.loads": ("UNSAFE_DESERIALIZE", "pickle.loads() 反序列化，只读自家生成的数据，或改用 json"),
+    "marshal.loads": ("UNSAFE_DESERIALIZE", "marshal.loads() 反序列化代码对象，插件用不到，移除"),
+    "os.dup2": ("FD_REDIRECT", "重定向文件描述符，插件用不到，移除"),
+    "shutil.rmtree": ("RECURSIVE_DELETE", "递归删除目录，确认路径限定在插件自己的数据目录内"),
 }
 
 
@@ -70,24 +70,42 @@ def scan_python_calls(file: str, source: str, tree: ast.AST) -> list[dict[str, A
 
     call_names = {name for name, _ in calls}
     if call_names & EXEC_CALLS and call_names & DECODE_CALLS:
-        out.append(finding("DECODE_AND_EXEC", BLOCK, STATIC, file, 0, "同一文件同时解码数据与动态执行，疑似加载加密 payload"))
+        out.append(
+            finding(
+                "DECODE_AND_EXEC",
+                BLOCK,
+                STATIC,
+                file,
+                0,
+                "同一文件既解码数据又动态执行，移除动态执行部分；这是加载加密 payload 的典型写法",
+            )
+        )
     if "pty.spawn" in call_names or ("os.dup2" in call_names and "socket.socket" in call_names):
-        out.append(finding("REVERSE_SHELL", BLOCK, STATIC, file, 0, "检测到反弹 shell 特征"))
+        out.append(finding("REVERSE_SHELL", BLOCK, STATIC, file, 0, "检出反弹 shell 特征，不可收录"))
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             value = node.value.lower()
             for marker in CREDENTIAL_MARKERS:
                 if marker in value:
-                    out.append(finding("CREDENTIAL_ACCESS", BLOCK, STATIC, file, node.lineno, f"访问凭据位置：{marker}"))
+                    out.append(
+                        finding(
+                            "CREDENTIAL_ACCESS",
+                            BLOCK,
+                            STATIC,
+                            file,
+                            node.lineno,
+                            f"读取浏览器或系统凭据（{marker}），插件不允许访问这些位置",
+                        )
+                    )
                     break
 
     for line_no, line in enumerate(source.splitlines(), 1):
         if len(line) > 800:
-            out.append(finding("OBFUSCATED_LINE", REVIEW, STATIC, file, line_no, "单行超过 800 字符，疑似混淆"))
+            out.append(finding("OBFUSCATED_LINE", REVIEW, STATIC, file, line_no, "单行超过 800 字符，格式化代码；长数据放到独立文件"))
             break
         if len(re.findall(r"\\x[0-9a-fA-F]{2}", line)) > 20:
-            out.append(finding("ESCAPE_HEAVY", REVIEW, STATIC, file, line_no, "大量十六进制转义，疑似混淆"))
+            out.append(finding("ESCAPE_HEAVY", REVIEW, STATIC, file, line_no, "大量十六进制转义，改成明文或放到数据文件"))
             break
 
     return out
