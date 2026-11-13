@@ -1,8 +1,7 @@
 """扫描入口：解开 ZIP，按类别调用各扫描模块，汇总成一份 JSON 报告。
 
 由 scan/client.ts 以子进程调用，stdout 最后一行是报告 JSON。
-规则改动后删掉 .lock/scan-results.json 就能整体重扫；也可以把 common.py 的
-SCAN_RULE_VERSION 加一让旧缓存自动失效。版本由 --version 读出，不必同步改 TS 侧。
+结果按包的 sha256 缓存，同一个包只扫一次；规则改了删掉 .lock/scan-results.json 即可整体重扫。
 
 各类别分文件维护，规则数据也放在各自的模块里：
 - static_scan.py      Python 源码 AST：动态执行、命令执行、凭据访问、混淆
@@ -28,7 +27,6 @@ from common import (
     MAX_FINDINGS,
     MAX_SCAN_BYTES,
     REVIEW,
-    SCAN_RULE_VERSION,
     SCANNER,
     TEXT_SUFFIXES,
     finding,
@@ -104,7 +102,6 @@ def scan_zip(
         findings.append(finding("SCAN_TRUNCATED", REVIEW, SCANNER, "", 0, f"命中项超过 {MAX_FINDINGS} 条，已截断"))
 
     return {
-        "ruleVersion": SCAN_RULE_VERSION,
         "scannedFiles": scanned,
         "pythonFiles": python_files,
         "findings": findings,
@@ -117,7 +114,7 @@ def scan_zip(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Scan a plugin release ZIP without executing its code.")
-    parser.add_argument("--zip", help="Path to the release <id>.zip")
+    parser.add_argument("--zip", required=True, help="Path to the release <id>.zip")
     parser.add_argument(
         "--host-packages",
         default="",
@@ -128,16 +125,7 @@ def main() -> int:
         default="",
         help="Comma separated ids of plugins already in the market; importing them is not a third-party dependency",
     )
-    parser.add_argument("--version", action="store_true", help="Print the rule version and exit")
     args = parser.parse_args()
-
-    if args.version:
-        print(json.dumps({"ruleVersion": SCAN_RULE_VERSION}))
-        return 0
-
-    # --version 要能单独跑，--zip 的必填检查只能放在这里，不能交给 argparse
-    if args.zip is None:
-        parser.error("--zip is required")
 
     path = Path(args.zip)
     if not path.is_file():

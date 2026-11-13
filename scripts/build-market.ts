@@ -10,7 +10,7 @@ import { createBuildContext, lockDirectories, readLock, type BuiltPlugin, type L
 import { checkEntries, readEntryFiles, readPolicy } from "./lib/market";
 import { parseMirrors, buildSources, githubAssetUrl, type MirrorRepo } from "./lib/mirror";
 import { downloadAndValidate } from "./lib/validator";
-import { readScanRuleVersion, formatFindings } from "./scan/client";
+import { formatFindings } from "./scan/client";
 import { loadHostPackages } from "./scan/host_packages";
 import { notifyPendingSecurityReviews, scanExistingReleases, scanVersion } from "./scan/policy";
 import { type MarketSourceEntry, type PluginCompatibility, type PluginEntry, type PluginWarning, type RiskTag, type PluginRelease, type WarningCode, type MarketIndex, type PluginStats, type SearchEntry, type MarketPolicy } from "@/lib/types";
@@ -27,25 +27,11 @@ import { renderSafeHtml } from "./lib/html";
 async function main(): Promise<void> {
   const policy = await readPolicy();
   const { lockDir, lockPath } = lockDirectories();
-  // 规则版本从扫描器自己读，改动 Python 规则后旧缓存自动失效，不必记得同步改 TS。
-  // 读不到时不让整轮构建挂掉：置 0 表示「版本未知」，已有缓存一律不复用；
-  // 扫描本身若也起不来，调度层会逐条记跳过，索引照常产出。
-  let scanRuleVersion = 0;
-  let scanRuleError = "";
-  try {
-    scanRuleVersion = await readScanRuleVersion();
-  } catch (error) {
-    scanRuleError = error instanceof Error ? error.message : String(error);
-  }
   // 主程序环境里已经装好的包，插件直接 import 属正常用法；清单跟着主程序的 uv.lock 走
   const hostNotes: string[] = [];
   const hostPackages = await loadHostPackages(lockDir, (line) => hostNotes.push(line));
-  const ctx = createBuildContext(policy, await readLock(lockPath), scanRuleVersion, hostPackages);
-  ctx.report.push(
-    scanRuleError
-      ? `- ⚠️ 扫描规则版本读取失败，本轮不复用扫描缓存：${scanRuleError.slice(0, 160)}`
-      : `- ℹ️ 安全扫描规则版本 ${ctx.scanRuleVersion}，主程序包 ${hostPackages.length} 个`
-  );
+  const ctx = createBuildContext(policy, await readLock(lockPath), hostPackages);
+  ctx.report.push(`- ℹ️ 安全扫描已启用，主程序包 ${hostPackages.length} 个`);
   ctx.report.push(...hostNotes);
 
   // 配了索引镜像但凭证不全时 静默跳过会让人以为镜像在工作；主动关闭的不报

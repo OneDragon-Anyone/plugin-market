@@ -22,9 +22,10 @@ export interface SecurityNoticeOptions {
   log: (line: string) => void;
 }
 
-/** 规则版本变了会重扫并可能命中新项，指纹得带上版本，不然会被旧记录挡掉 */
-export function securityNoticeKey(report: ScanReport, sha256: string): string {
-  return `${report.ruleVersion}:${sha256}`;
+/** 一个包只通知一次，指纹就是包本身 */
+export function securityAlreadyNotified(lock: LockPlugin, sha256: string): boolean {
+  // 早年记的是 `x:sha256`，按后缀认，免得老记录失效后又通知一遍
+  return (lock.securityNotified ?? []).some((key) => key === sha256 || key.endsWith(`:${sha256}`));
 }
 
 function hitLines(findings: ScanFinding[]): string[] {
@@ -40,7 +41,7 @@ function bodyOf(options: SecurityNoticeOptions, hits: ScanFinding[]): string {
     "构建不会据此拦截或下架，请维护者确认后决定是否跟进作者。",
     ...paragraph("命中项："),
     ...hitLines(hits),
-    ...paragraph(`扫描覆盖：${describeScan(options.report)}，规则版本 ${options.report.ruleVersion}。`),
+    ...paragraph(`扫描覆盖：${describeScan(options.report)}。`),
     ...paragraph("同一个包只通知一次，后续新命中会以评论追加到这条 issue。")
   ].join("\n");
 }
@@ -57,9 +58,7 @@ export async function notifySecurityReview(options: SecurityNoticeOptions): Prom
     return;
   }
 
-  const key = securityNoticeKey(report, sha256);
-  const notified = lock.securityNotified ?? [];
-  if (notified.includes(key)) return;
+  if (securityAlreadyNotified(lock, sha256)) return;
 
   let issue = lock.securityIssue ?? 0;
   let appended = false;
@@ -89,5 +88,5 @@ export async function notifySecurityReview(options: SecurityNoticeOptions): Prom
   } else {
     log(`- 📮 ${entry.id} 新增待确认项已补进 issue ${issueRef(options.target, issue)}`);
   }
-  lock.securityNotified = [...notified, key];
+  lock.securityNotified = [...(lock.securityNotified ?? []), sha256];
 }

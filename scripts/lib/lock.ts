@@ -25,8 +25,6 @@ export interface BuildContext {
   previousApiUrl: string;
   templateDir: string;
   issueTarget: string;
-  /** 本轮扫描规则版本，构建启动时从 Python 侧读取，作为缓存的唯一键 */
-  scanRuleVersion: number;
   scanCache: ScanCache;
   /** 本轮已补扫的存量版本数，每轮限量 */
   backfillScans: number;
@@ -54,7 +52,6 @@ export async function readLock(lockPath: string): Promise<Lock> {
 export function createBuildContext(
   policy: MarketPolicy,
   lock: Lock,
-  scanRuleVersion: number,
   hostPackages: string[] = []
 ): BuildContext {
   const { lockDir, lockPath, lockCoversDir } = lockDirectories();
@@ -75,8 +72,7 @@ export function createBuildContext(
     /** 自动 issue 要写进去的仓库 空串表示这轮不发（本地跑默认不发） */
     issueTarget:
       process.env.MARKET_OPEN_ISSUES === "true" ? (process.env.GITHUB_REPOSITORY ?? "").trim() : "",
-    scanRuleVersion,
-    scanCache: new ScanCache(scanCachePath(lockDir), scanRuleVersion, hostPackages),
+    scanCache: new ScanCache(scanCachePath(lockDir)),
     backfillScans: 0,
     knownPlugins: [],
     hostPackages,
@@ -125,7 +121,7 @@ export interface LockPlugin {
   revokedResolved?: string;
   /** 安全扫描待确认项的那条 issue 后续新命中以评论追加 */
   securityIssue?: number;
-  /** 已经写进 issue 的「规则版本:sha256」 免得同一个包重复通知 */
+  /** 已经写进 issue 的包 sha256 免得同一个包重复通知 */
   securityNotified?: string[];
 }
 
