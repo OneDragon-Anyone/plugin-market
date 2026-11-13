@@ -30,6 +30,10 @@ export interface BuildContext {
   scanCache: ScanCache;
   /** 本轮已补扫的存量版本数，每轮限量 */
   backfillScans: number;
+  /** 市场上已收录的插件 id，读完条目后填；插件之间互相 import 不算第三方依赖 */
+  knownPlugins: string[];
+  /** 主程序环境里已经装好的 import 名，启动时从主程序的 uv.lock 取 */
+  hostPackages: string[];
   /** 上一版 stats.json 只拉一次，null 表示还没读 */
   previousStatsCache: Record<string, PluginStats> | null;
 }
@@ -47,7 +51,12 @@ export async function readLock(lockPath: string): Promise<Lock> {
   return existsSync(lockPath) ? (JSON.parse(await readFile(lockPath, "utf-8")) as Lock) : {};
 }
 
-export function createBuildContext(policy: MarketPolicy, lock: Lock, scanRuleVersion: number): BuildContext {
+export function createBuildContext(
+  policy: MarketPolicy,
+  lock: Lock,
+  scanRuleVersion: number,
+  hostPackages: string[] = []
+): BuildContext {
   const { lockDir, lockPath, lockCoversDir } = lockDirectories();
   const previousApiBase = (process.env.PREVIOUS_API_URL ?? "").trim();
   return {
@@ -67,8 +76,10 @@ export function createBuildContext(policy: MarketPolicy, lock: Lock, scanRuleVer
     issueTarget:
       process.env.MARKET_OPEN_ISSUES === "true" ? (process.env.GITHUB_REPOSITORY ?? "").trim() : "",
     scanRuleVersion,
-    scanCache: new ScanCache(scanCachePath(lockDir), scanRuleVersion),
+    scanCache: new ScanCache(scanCachePath(lockDir), scanRuleVersion, hostPackages),
     backfillScans: 0,
+    knownPlugins: [],
+    hostPackages,
     previousStatsCache: null
   };
 }

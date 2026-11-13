@@ -20,7 +20,7 @@ from common import (
 )
 
 # 依赖扫描的规则数据，跟模块一起增删
-# 主程序自带的包不算第三方依赖
+# 主程序自己的模块
 HOST_ROOTS = {"one_dragon", "one_dragon_qt", "zzz_od"}
 STDLIB_ROOTS = set(sys.stdlib_module_names)
 NETWORK_ROOTS = {
@@ -36,8 +36,19 @@ DEPENDENCY_FILES = {
 }
 
 
-def scan_python_imports(file: str, tree: ast.AST, package_roots: set[str]) -> list[dict[str, Any]]:
-    """源码里的 import：网络模块提示确认，标准库与主程序之外的包提示第三方。"""
+def scan_python_imports(
+    file: str,
+    tree: ast.AST,
+    package_roots: set[str],
+    host_roots: set[str],
+    plugin_roots: set[str],
+) -> list[dict[str, Any]]:
+    """源码里的 import：网络模块提示确认，标准库、主程序与已上架插件之外的包提示第三方。
+
+    host_roots 是主程序环境里已经装好的 import 名，由调用方从主程序的 uv.lock 换算后传进来，
+    不在这里手抄。plugin_roots 是市场上其它已收录插件的 id：插件之间互相 import 属正常依赖，
+    不是绕开主程序依赖体系，按第三方包报会误导维护者。
+    """
     out: list[dict[str, Any]] = []
     for node in ast.walk(tree):
         modules: list[tuple[str, int]] = []
@@ -51,7 +62,14 @@ def scan_python_imports(file: str, tree: ast.AST, package_roots: set[str]) -> li
             if root in NETWORK_ROOTS:
                 out.append(finding("NETWORK_MODULE", REVIEW, STATIC, file, line, f"使用网络模块 {root}，需确认与申报的风险标签一致"))
                 continue
-            if root in STDLIB_ROOTS or root in HOST_ROOTS or root == "__future__" or root in package_roots:
+            if (
+                root in STDLIB_ROOTS
+                or root in HOST_ROOTS
+                or root in host_roots
+                or root == "__future__"
+                or root in package_roots
+                or root in plugin_roots
+            ):
                 continue
             out.append(finding("THIRD_PARTY_IMPORT", REVIEW, DEPENDENCY, file, line, f"引用第三方包 {root}，需确认主程序已内置"))
     return out

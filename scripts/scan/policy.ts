@@ -36,7 +36,10 @@ export async function scanVersion(
   }
   try {
     const zipPath = await getZip();
-    const result = await scanZip(zipPath);
+    const result = await scanZip(zipPath, {
+      hostPackages: ctx.hostPackages,
+      knownPlugins: ctx.knownPlugins
+    });
     await ctx.scanCache.set(sha256, {
       id,
       tag,
