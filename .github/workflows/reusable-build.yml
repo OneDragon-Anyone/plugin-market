@@ -9,10 +9,9 @@ on:
         required: false
         default: OneDragon-Anyone/plugin-template
       template_ref:
-        description: 模板仓的 tag，不传时用 v1
+        description: 模板仓的 tag 或分支，不传时用该仓默认分支
         type: string
         required: false
-        default: v1
     secrets:
       CNB_TOKEN:
         description: CNB 访问令牌 提交索引与封面必需 未配置时跳过索引镜像
