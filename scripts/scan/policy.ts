@@ -10,7 +10,7 @@ import type { MarketSourceEntry, PluginWarning } from "@/lib/types";
 import { downloadBytes, type GhRepo } from "../lib/github";
 import type { LockPlugin, BuildContext } from "../lib/lock";
 import { describeScan, formatFindings, scanZip, type ScanReport } from "./client";
-import { notifySecurityReview, securityNoticeKey } from "../issues/security";
+import { notifySecurityReview, securityAlreadyNotified } from "../issues/security";
 
 /** 拿不到包且以后也拿不到的情况，记进缓存免得每轮重试 */
 export class ScanUnavailable extends Error {}
@@ -19,8 +19,8 @@ export class ScanUnavailable extends Error {}
 const MAX_BACKFILL_SCANS_PER_RUN = 20;
 
 /**
- * 按 sha256 复用扫描结果。版本递增且发布后内容不可变，命中缓存就不下载、不重扫；
- * 规则版本变更时缓存整体失效。
+ * 按 sha256 复用扫描结果。同一个 tag 发布后内容不可变，命中缓存就不下载、不重扫；
+ * 同一个包永远只扫一次。
  */
 export async function scanVersion(
   ctx: BuildContext,
@@ -36,12 +36,14 @@ export async function scanVersion(
   }
   try {
     const zipPath = await getZip();
-    const result = await scanZip(zipPath);
+    const result = await scanZip(zipPath, {
+      hostPackages: ctx.hostPackages,
+      knownPlugins: ctx.knownPlugins
+    });
     await ctx.scanCache.set(sha256, {
       id,
       tag,
       scannedAt: ctx.now.toISOString(),
-      ruleVersion: result.ruleVersion,
       status: "scanned",
       report: result
     });
@@ -56,7 +58,6 @@ export async function scanVersion(
         id,
         tag,
         scannedAt: ctx.now.toISOString(),
-        ruleVersion: ctx.scanRuleVersion,
         status: "unavailable"
       });
     }
@@ -122,7 +123,7 @@ export async function notifyPendingSecurityReviews(
     if (released.revokedAt) continue;
     const report = ctx.scanCache.get(released.sha256)?.report;
     if (!report || report.summary.review === 0) continue;
-    if ((lock.securityNotified ?? []).includes(securityNoticeKey(report, released.sha256))) continue;
+    if (securityAlreadyNotified(lock, released.sha256)) continue;
     try {
       await notifySecurityReview({
         target: ctx.issueTarget,

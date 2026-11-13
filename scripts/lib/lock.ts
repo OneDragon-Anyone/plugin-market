@@ -25,11 +25,13 @@ export interface BuildContext {
   previousApiUrl: string;
   templateDir: string;
   issueTarget: string;
-  /** 本轮扫描规则版本，构建启动时从 Python 侧读取，作为缓存的唯一键 */
-  scanRuleVersion: number;
   scanCache: ScanCache;
   /** 本轮已补扫的存量版本数，每轮限量 */
   backfillScans: number;
+  /** 市场上已收录的插件 id，读完条目后填；插件之间互相 import 不算第三方依赖 */
+  knownPlugins: string[];
+  /** 主程序环境里已经装好的 import 名，启动时从主程序的 uv.lock 取 */
+  hostPackages: string[];
   /** 上一版 stats.json 只拉一次，null 表示还没读 */
   previousStatsCache: Record<string, PluginStats> | null;
 }
@@ -47,7 +49,11 @@ export async function readLock(lockPath: string): Promise<Lock> {
   return existsSync(lockPath) ? (JSON.parse(await readFile(lockPath, "utf-8")) as Lock) : {};
 }
 
-export function createBuildContext(policy: MarketPolicy, lock: Lock, scanRuleVersion: number): BuildContext {
+export function createBuildContext(
+  policy: MarketPolicy,
+  lock: Lock,
+  hostPackages: string[] = []
+): BuildContext {
   const { lockDir, lockPath, lockCoversDir } = lockDirectories();
   const previousApiBase = (process.env.PREVIOUS_API_URL ?? "").trim();
   return {
@@ -66,9 +72,10 @@ export function createBuildContext(policy: MarketPolicy, lock: Lock, scanRuleVer
     /** 自动 issue 要写进去的仓库 空串表示这轮不发（本地跑默认不发） */
     issueTarget:
       process.env.MARKET_OPEN_ISSUES === "true" ? (process.env.GITHUB_REPOSITORY ?? "").trim() : "",
-    scanRuleVersion,
-    scanCache: new ScanCache(scanCachePath(lockDir), scanRuleVersion),
+    scanCache: new ScanCache(scanCachePath(lockDir)),
     backfillScans: 0,
+    knownPlugins: [],
+    hostPackages,
     previousStatsCache: null
   };
 }
@@ -114,7 +121,7 @@ export interface LockPlugin {
   revokedResolved?: string;
   /** 安全扫描待确认项的那条 issue 后续新命中以评论追加 */
   securityIssue?: number;
-  /** 已经写进 issue 的「规则版本:sha256」 免得同一个包重复通知 */
+  /** 已经写进 issue 的包 sha256 免得同一个包重复通知 */
   securityNotified?: string[];
 }
 

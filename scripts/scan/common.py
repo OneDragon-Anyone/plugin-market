@@ -1,4 +1,4 @@
-"""扫描器共用：规则版本、严重级别、类别名、命中项结构与通用工具。
+"""扫描器共用：严重级别、类别名、命中项结构与通用工具。
 
 一类扫描一个模块：static_scan / dependency_scan / malware_scan，各自的规则数据放在
 自己的模块里。新增一类时建一个模块，在 scan_plugin.py 的聚合流程里加一行调用；
@@ -13,8 +13,6 @@ from collections import Counter
 from pathlib import PurePosixPath
 from typing import Any
 
-# 规则变更后删掉 .lock/scan-results.json 就能整体重扫；不想清文件时把版本加一也行
-SCAN_RULE_VERSION = 1
 MAX_SCAN_BYTES = 8 * 1024 * 1024
 MAX_FINDINGS = 60
 

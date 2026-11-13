@@ -1,5 +1,5 @@
 /**
- * 扫描器的 TS 侧：读规则版本、起 Python 子进程跑 scan_plugin.py、结果按 sha256 缓存。
+ * 扫描器的 TS 侧：起 Python 子进程跑 scan_plugin.py，结果按 sha256 缓存。
  */
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -7,16 +7,6 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { lastJsonLine, runPython } from "../lib/validator";
 const scannerPath = resolve(dirname(fileURLToPath(import.meta.url)), "scan_plugin.py");
-
-/** 规则版本只由 Python 侧的 --version 给出；改规则时不必再同步改 TS，旧缓存自动失效 */
-export async function readScanRuleVersion(): Promise<number> {
-  const run = await runPython(scannerPath, ["--version"]);
-  const { ruleVersion } = lastJsonLine<{ ruleVersion: number }>(run.stdout, "scanner --version");
-  if (!Number.isInteger(ruleVersion) || ruleVersion < 1) {
-    throw new Error(`scanner reported invalid rule version: ${String(ruleVersion)}`);
-  }
-  return ruleVersion;
-}
 
 export interface ScanFinding {
   code: string;
@@ -29,7 +19,6 @@ export interface ScanFinding {
 }
 
 export interface ScanReport {
-  ruleVersion: number;
   scannedFiles: number;
   pythonFiles: number;
   findings: ScanFinding[];
@@ -40,29 +29,36 @@ export interface ScanCacheEntry {
   id: string;
   tag: string;
   scannedAt: string;
-  ruleVersion: number;
   status: "scanned" | "unavailable";
   report?: ScanReport;
 }
 
 interface ScanCacheFile {
-  version: 1;
   results: Record<string, ScanCacheEntry>;
+}
+
+export interface ScanOptions {
+  /** 主程序环境里已经装好的 import 名，不当作第三方依赖 */
+  hostPackages?: string[];
+  /** 市场上已收录的插件 id，插件之间互相 import 不算第三方依赖 */
+  knownPlugins?: string[];
 }
 
 /**
  * 扫描器本身出问题时直接抛，调度层记一条「跳过」并且不写缓存，下轮重试。
  * 早先这里返回一份带 review 的假报告，会被当成正常结果缓存下来，那个包就再也不会重扫。
  */
-export async function scanZip(zipPath: string): Promise<ScanReport> {
-  const run = await runPython(scannerPath, ["--zip", zipPath]);
+export async function scanZip(zipPath: string, options: ScanOptions = {}): Promise<ScanReport> {
+  const args = ["--zip", zipPath];
+  if (options.hostPackages?.length) args.push("--host-packages", options.hostPackages.join(","));
+  if (options.knownPlugins?.length) args.push("--known-plugins", options.knownPlugins.join(","));
+  const run = await runPython(scannerPath, args);
   const line = run.stdout.trim().split("\n").pop() ?? "";
   if (!line.startsWith("{")) {
     throw new Error(`scanner produced no JSON: ${(run.stderr || run.stdout).trim().slice(0, 200)}`);
   }
   const report = lastJsonLine<ScanReport & { error?: string }>(run.stdout, "scanner");
   if (report.error) throw new Error(`scanner failed: ${report.error}`);
-  if (!Number.isInteger(report.ruleVersion)) throw new Error("scanner report has no ruleVersion");
   return report;
 }
 
@@ -81,14 +77,14 @@ export function describeScan(report: ScanReport): string {
 }
 
 /**
- * 扫描结果按 zip 的 sha256 存 lock 分支。版本递增且发布后内容不可变，
- * 所以同一个指纹永远只需扫一次；规则版本变了才整体重扫。
- * ruleVersion 在构建启动时从 Python 读来，这里不再自带一份常量。
+ * 扫描结果按 zip 的 sha256 存 lock 分支。同一个 tag 发布后内容不可变，
+ * 所以同一个指纹永远只需扫一次，命中就不下载不重扫。
+ * 规则改了想重跑历史版本时，删掉缓存文件即可。
  */
 export class ScanCache {
   private results: Record<string, ScanCacheEntry> = {};
 
-  constructor(private readonly path: string, private readonly ruleVersion: number) {}
+  constructor(private readonly path: string) {}
 
   get size(): number {
     return Object.keys(this.results).length;
@@ -97,21 +93,20 @@ export class ScanCache {
   async load(): Promise<void> {
     try {
       const parsed = JSON.parse(await readFile(this.path, "utf-8")) as ScanCacheFile;
-      this.results = parsed.version === 1 && parsed.results ? parsed.results : {};
+      this.results = parsed.results ?? {};
     } catch {
       this.results = {};
     }
   }
 
   get(sha256: string): ScanCacheEntry | null {
-    const entry = this.results[sha256];
-    return entry && entry.ruleVersion === this.ruleVersion ? entry : null;
+    return this.results[sha256] ?? null;
   }
 
   async set(sha256: string, entry: ScanCacheEntry): Promise<void> {
     this.results[sha256] = entry;
     await mkdir(dirname(this.path), { recursive: true });
-    const file: ScanCacheFile = { version: 1, results: this.results };
+    const file: ScanCacheFile = { results: this.results };
     await writeFile(this.path, `${JSON.stringify(file, null, 2)}\n`, "utf-8");
   }
 }

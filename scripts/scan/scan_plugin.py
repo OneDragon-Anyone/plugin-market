@@ -1,8 +1,7 @@
 """扫描入口：解开 ZIP，按类别调用各扫描模块，汇总成一份 JSON 报告。
 
 由 scan/client.ts 以子进程调用，stdout 最后一行是报告 JSON。
-规则改动后删掉 .lock/scan-results.json 就能整体重扫；也可以把 common.py 的
-SCAN_RULE_VERSION 加一让旧缓存自动失效。版本由 --version 读出，不必同步改 TS 侧。
+结果按包的 sha256 缓存，同一个包只扫一次；规则改了删掉 .lock/scan-results.json 即可整体重扫。
 
 各类别分文件维护，规则数据也放在各自的模块里：
 - static_scan.py      Python 源码 AST：动态执行、命令执行、凭据访问、混淆
@@ -28,7 +27,6 @@ from common import (
     MAX_FINDINGS,
     MAX_SCAN_BYTES,
     REVIEW,
-    SCAN_RULE_VERSION,
     SCANNER,
     TEXT_SUFFIXES,
     finding,
@@ -37,7 +35,13 @@ from common import (
 )
 
 
-def scan_zip(zip_path: str) -> dict[str, Any]:
+def scan_zip(
+    zip_path: str,
+    plugin_roots: set[str] | None = None,
+    host_roots: set[str] | None = None,
+) -> dict[str, Any]:
+    plugin_roots = plugin_roots or set()
+    host_roots = host_roots or set()
     findings: list[dict[str, Any]] = []
     scanned = 0
     python_files = 0
@@ -79,7 +83,9 @@ def scan_zip(zip_path: str) -> dict[str, Any]:
                     findings.append(syntax_error)
                 else:
                     findings.extend(static_scan.scan_python_calls(name, data.decode("utf-8", "replace"), tree))
-                    findings.extend(dependency_scan.scan_python_imports(name, tree, package_roots))
+                    findings.extend(
+                        dependency_scan.scan_python_imports(name, tree, package_roots, host_roots, plugin_roots)
+                    )
                 findings.extend(malware_scan.scan_text(name, data))
             elif suffix in TEXT_SUFFIXES:
                 findings.extend(malware_scan.scan_text(name, data))
@@ -96,7 +102,6 @@ def scan_zip(zip_path: str) -> dict[str, Any]:
         findings.append(finding("SCAN_TRUNCATED", REVIEW, SCANNER, "", 0, f"命中项超过 {MAX_FINDINGS} 条，已截断"))
 
     return {
-        "ruleVersion": SCAN_RULE_VERSION,
         "scannedFiles": scanned,
         "pythonFiles": python_files,
         "findings": findings,
@@ -109,24 +114,27 @@ def scan_zip(zip_path: str) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Scan a plugin release ZIP without executing its code.")
-    parser.add_argument("--zip", help="Path to the release <id>.zip")
-    parser.add_argument("--version", action="store_true", help="Print the rule version and exit")
+    parser.add_argument("--zip", required=True, help="Path to the release <id>.zip")
+    parser.add_argument(
+        "--host-packages",
+        default="",
+        help="Comma separated import names already installed by the host program; not third-party dependencies",
+    )
+    parser.add_argument(
+        "--known-plugins",
+        default="",
+        help="Comma separated ids of plugins already in the market; importing them is not a third-party dependency",
+    )
     args = parser.parse_args()
-
-    if args.version:
-        print(json.dumps({"ruleVersion": SCAN_RULE_VERSION}))
-        return 0
-
-    # --version 要能单独跑，--zip 的必填检查只能放在这里，不能交给 argparse
-    if args.zip is None:
-        parser.error("--zip is required")
 
     path = Path(args.zip)
     if not path.is_file():
         print(json.dumps({"error": f"file not found: {path}"}))
         return 2
+    plugin_roots = {item.strip() for item in args.known_plugins.split(",") if item.strip()}
+    host_roots = {item.strip() for item in args.host_packages.split(",") if item.strip()}
     try:
-        report = scan_zip(str(path))
+        report = scan_zip(str(path), plugin_roots, host_roots)
     except (zipfile.BadZipFile, OSError) as exc:
         print(json.dumps({"error": str(exc)}))
         return 2
