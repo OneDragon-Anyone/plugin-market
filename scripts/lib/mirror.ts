@@ -1,3 +1,9 @@
+/** 下载源规则：解析作者声明的镜像仓库，拼出各站点的安装包地址。 */
+
+
+
+// ---- 镜像解析与下载地址 ----
+
 /** 镜像只收这两家，作者填仓库地址，下载路径由构建拼 */
 export type MirrorHost = "cnb" | "gitee";
 
@@ -104,4 +110,43 @@ export function checkMirror(value: unknown, fail: (message: string) => void): vo
       hosts.add(repo.host);
     }
   }
+}
+
+/** 拼 release 附件地址：站点 + 仓库坐标 + 该站的 release 路径 + tag + 附件名 */
+function releaseAssetUrl(origin: string, repo: string, releasePath: string, tag: string, assetName: string): string {
+  const path = repo
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  return `${origin}/${path}${releasePath}/${encodeURIComponent(tag)}/${assetName}`;
+}
+
+/** 由仓库与 tag 拼 GitHub 下载地址 不依赖上一次索引里记的地址；仓库可以给 owner/repo 或仓库页地址 */
+export function githubAssetUrl(repo: string, tag: string, assetName: string): string {
+  const full = repo.replace(/^https?:\/\/github\.com\//, "").replace(/\/+$/, "");
+  return releaseAssetUrl("https://github.com", full, "/releases/download", tag, assetName);
+}
+
+/** 两家的 release 路径格式不一样，cnb 多一层 `/-/` */
+const MIRROR_RELEASE_PATH: Record<MirrorHost, string> = {
+  cnb: "/-/releases/download",
+  gitee: "/releases/download"
+};
+
+/** 镜像仓库拼成这一版的下载地址 */
+function mirrorAssetUrl(target: MirrorRepo, tag: string, assetName: string): string {
+  return releaseAssetUrl(target.origin, target.repo, MIRROR_RELEASE_PATH[target.host], tag, assetName);
+}
+
+/** 下载地址表：作者声明的镜像 + GitHub 原址 后者恒由构建填 */
+export function buildSources(
+  targets: MirrorRepo[],
+  tag: string,
+  assetName: string,
+  githubUrl: string
+): Record<string, string> {
+  const sources: Record<string, string> = {};
+  for (const target of targets) sources[target.host] = mirrorAssetUrl(target, tag, assetName);
+  sources.github = githubUrl;
+  return sources;
 }

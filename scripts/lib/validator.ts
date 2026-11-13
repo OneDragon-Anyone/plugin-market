@@ -1,9 +1,45 @@
+/** Python 工具通道与插件包校验：起子进程跑模板仓的 validate_plugin.py。 */
+
+import { downloadBytes, type GhRelease, listReleases } from "./github";
+import { type MarketPolicy } from "@/lib/types";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { MarketPolicy } from "@/lib/types";
-import { downloadBytes, type GhRelease, listReleases } from "./github";
+
+// ---- Python 子进程通道 ----
+
+export interface PythonRun {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+/** 本仓所有 Python 工具走同一条子进程通道，调用方自己决定退出码怎么处理 */
+export function runPython(script: string, args: string[] = []): Promise<PythonRun> {
+  const [command, ...prefix] = (process.env.PYTHON ?? "python").split(/\s+/).filter(Boolean);
+  return new Promise((done, fail) => {
+    const child = spawn(command, [...prefix, script, ...args], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, PYTHONIOENCODING: "utf-8" }
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf-8")));
+    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf-8")));
+    child.on("error", fail);
+    child.on("close", (code) => done({ code, stdout, stderr }));
+  });
+}
+
+/** Python 工具把结果写成 stdout 最后一行 JSON，前面的都是日志 */
+export function lastJsonLine<T>(stdout: string, context: string): T {
+  const line = stdout.trim().split("\n").pop() ?? "";
+  if (!line.startsWith("{")) throw new Error(`${context} produced no JSON: ${line.slice(0, 200)}`);
+  return JSON.parse(line) as T;
+}
+
+// ---- 插件包校验 ----
 
 export interface ValidatorResult {
   ok: boolean;
@@ -13,28 +49,14 @@ export interface ValidatorResult {
   hasAppSetting: boolean;
 }
 
-function runValidator(args: string[]): Promise<ValidatorResult> {
-  const [command, ...prefix] = (process.env.PYTHON ?? "python").split(/\s+/).filter(Boolean);
+async function runValidator(args: string[]): Promise<ValidatorResult> {
   const script = join(resolve(process.env.TEMPLATE_DIR ?? ".plugin-template"), "scripts", "validate_plugin.py");
-  return new Promise((done, fail) => {
-    const child = spawn(command, [...prefix, script, ...args, "--json"], {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, PYTHONIOENCODING: "utf-8" }
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf-8")));
-    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf-8")));
-    child.on("error", fail);
-    child.on("close", (code) => {
-      const lastLine = stdout.trim().split("\n").pop() ?? "";
-      if ((code === 0 || code === 1) && lastLine.startsWith("{")) {
-        done(JSON.parse(lastLine) as ValidatorResult);
-        return;
-      }
-      fail(new Error(`validator exited with ${code}: ${(stderr || stdout).trim()}`));
-    });
-  });
+  const run = await runPython(script, [...args, "--json"]);
+  const lastLine = run.stdout.trim().split("\n").pop() ?? "";
+  if ((run.code !== 0 && run.code !== 1) || !lastLine.startsWith("{")) {
+    throw new Error(`validator exited with ${run.code}: ${(run.stderr || run.stdout).trim()}`);
+  }
+  return lastJsonLine<ValidatorResult>(run.stdout, "validator");
 }
 
 export interface ZipCheck {

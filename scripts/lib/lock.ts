@@ -1,4 +1,77 @@
-import type { WarningCode } from "@/lib/types";
+/** 构建状态：路径、锁文件结构、扫描缓存与一次构建的共享上下文。 */
+
+import { ScanCache, scanCachePath } from "../scan/client";
+import { rootDir } from "./market";
+import { type MarketPolicy, type PluginEntry, type PluginStats, type WarningCode } from "@/lib/types";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+
+// ---- 共享状态与锁文件结构 ----
+
+/** 构建产物：条目 + 每轮都会变的统计值，写盘时分开存 */
+export type BuiltPlugin = PluginEntry & PluginStats;
+
+/** 一次构建的共享状态：原先散在入口顶层的常量集中到这里 */
+export interface BuildContext {
+  now: Date;
+  report: string[];
+  policy: MarketPolicy;
+  lock: Lock;
+  lockDir: string;
+  lockPath: string;
+  lockCoversDir: string;
+  apiDir: string;
+  previousApiUrl: string;
+  templateDir: string;
+  issueTarget: string;
+  /** 本轮扫描规则版本，构建启动时从 Python 侧读取，作为缓存的唯一键 */
+  scanRuleVersion: number;
+  scanCache: ScanCache;
+  /** 本轮已补扫的存量版本数，每轮限量 */
+  backfillScans: number;
+  /** 上一版 stats.json 只拉一次，null 表示还没读 */
+  previousStatsCache: Record<string, PluginStats> | null;
+}
+
+export function lockDirectories(): { lockDir: string; lockPath: string; lockCoversDir: string } {
+  const lockDir = resolve(process.env.LOCK_DIR ?? join(rootDir, ".lock"));
+  return {
+    lockDir,
+    lockPath: join(lockDir, "sources.lock.json"),
+    lockCoversDir: join(lockDir, "covers")
+  };
+}
+
+export async function readLock(lockPath: string): Promise<Lock> {
+  return existsSync(lockPath) ? (JSON.parse(await readFile(lockPath, "utf-8")) as Lock) : {};
+}
+
+export function createBuildContext(policy: MarketPolicy, lock: Lock, scanRuleVersion: number): BuildContext {
+  const { lockDir, lockPath, lockCoversDir } = lockDirectories();
+  const previousApiBase = (process.env.PREVIOUS_API_URL ?? "").trim();
+  return {
+    now: new Date(),
+    report: [],
+    policy,
+    lock,
+    lockDir,
+    lockPath,
+    lockCoversDir,
+    apiDir: join(rootDir, "public", "api", "v1"),
+    /** 统一补上结尾斜杠 相对地址才能正确拼到上一版目录下 */
+    previousApiUrl: previousApiBase === "" ? "" : `${previousApiBase.replace(/\/+$/, "")}/`,
+    /** 模板仓检出目录 与 validator 用的是同一个环境变量 */
+    templateDir: resolve(process.env.TEMPLATE_DIR ?? ".plugin-template"),
+    /** 自动 issue 要写进去的仓库 空串表示这轮不发（本地跑默认不发） */
+    issueTarget:
+      process.env.MARKET_OPEN_ISSUES === "true" ? (process.env.GITHUB_REPOSITORY ?? "").trim() : "",
+    scanRuleVersion,
+    scanCache: new ScanCache(scanCachePath(lockDir), scanRuleVersion),
+    backfillScans: 0,
+    previousStatsCache: null
+  };
+}
 
 /** 已收录版本在 lock 里的记录 */
 export interface LockRelease {
@@ -39,6 +112,10 @@ export interface LockPlugin {
   revokedNotified?: string[];
   /** 附件删掉、issue 关掉之后记下的记号 免得每轮重复关 */
   revokedResolved?: string;
+  /** 安全扫描待确认项的那条 issue 后续新命中以评论追加 */
+  securityIssue?: number;
+  /** 已经写进 issue 的「规则版本:sha256」 免得同一个包重复通知 */
+  securityNotified?: string[];
 }
 
 export type Lock = Record<string, LockPlugin>;
