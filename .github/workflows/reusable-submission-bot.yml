@@ -42,6 +42,9 @@ jobs:
           REPO: ${{ inputs.template_repository }}
           REF: ${{ inputs.template_ref }}
         run: |
+          # 仓库变量粘贴时容易带上换行 先清掉再拼地址
+          REPO=$(printf '%s' "$REPO" | tr -d '[:space:]')
+          REF=$(printf '%s' "$REF" | tr -d '[:space:]')
           if [ -n "$REF" ]; then
             echo "ref=$REF" >> "$GITHUB_OUTPUT"
             exit 0
