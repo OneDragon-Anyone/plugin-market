@@ -1,5 +1,6 @@
-/** 构建状态：路径、锁文件结构与一次构建的共享上下文。 */
+/** 构建状态：路径、锁文件结构、扫描缓存与一次构建的共享上下文。 */
 
+import { ScanCache, scanCachePath } from "../scan/client";
 import { rootDir } from "./market";
 import { type MarketPolicy, type PluginEntry, type PluginStats, type WarningCode } from "@/lib/types";
 import { existsSync } from "node:fs";
@@ -24,6 +25,11 @@ export interface BuildContext {
   previousApiUrl: string;
   templateDir: string;
   issueTarget: string;
+  /** 本轮扫描规则版本，构建启动时从 Python 侧读取，作为缓存的唯一键 */
+  scanRuleVersion: number;
+  scanCache: ScanCache;
+  /** 本轮已补扫的存量版本数，每轮限量 */
+  backfillScans: number;
   /** 上一版 stats.json 只拉一次，null 表示还没读 */
   previousStatsCache: Record<string, PluginStats> | null;
 }
@@ -41,7 +47,7 @@ export async function readLock(lockPath: string): Promise<Lock> {
   return existsSync(lockPath) ? (JSON.parse(await readFile(lockPath, "utf-8")) as Lock) : {};
 }
 
-export function createBuildContext(policy: MarketPolicy, lock: Lock): BuildContext {
+export function createBuildContext(policy: MarketPolicy, lock: Lock, scanRuleVersion: number): BuildContext {
   const { lockDir, lockPath, lockCoversDir } = lockDirectories();
   const previousApiBase = (process.env.PREVIOUS_API_URL ?? "").trim();
   return {
@@ -60,6 +66,9 @@ export function createBuildContext(policy: MarketPolicy, lock: Lock): BuildConte
     /** 自动 issue 要写进去的仓库 空串表示这轮不发（本地跑默认不发） */
     issueTarget:
       process.env.MARKET_OPEN_ISSUES === "true" ? (process.env.GITHUB_REPOSITORY ?? "").trim() : "",
+    scanRuleVersion,
+    scanCache: new ScanCache(scanCachePath(lockDir), scanRuleVersion),
+    backfillScans: 0,
     previousStatsCache: null
   };
 }
@@ -103,6 +112,10 @@ export interface LockPlugin {
   revokedNotified?: string[];
   /** 附件删掉、issue 关掉之后记下的记号 免得每轮重复关 */
   revokedResolved?: string;
+  /** 安全扫描待确认项的那条 issue 后续新命中以评论追加 */
+  securityIssue?: number;
+  /** 已经写进 issue 的「规则版本:sha256」 免得同一个包重复通知 */
+  securityNotified?: string[];
 }
 
 export type Lock = Record<string, LockPlugin>;

@@ -1,6 +1,6 @@
 /**
  * 构建入口：读数据仓条目 → 逐个插件同步 → 写出索引与封面 → 打印构建摘要。
- * 收录、索引回落、摘要都在这一个文件里，按下面的分节顺序读即可。
+ * 收录、扫描、索引回落、摘要都在这一个文件里，按下面的分节顺序读即可。
  */
 
 import { notifyRevoked } from "./issues/revoked";
@@ -10,6 +10,8 @@ import { createBuildContext, lockDirectories, readLock, type BuiltPlugin, type L
 import { checkEntries, readEntryFiles, readPolicy } from "./lib/market";
 import { parseMirrors, buildSources, githubAssetUrl, type MirrorRepo } from "./lib/mirror";
 import { downloadAndValidate } from "./lib/validator";
+import { readScanRuleVersion, formatFindings } from "./scan/client";
+import { notifyPendingSecurityReviews, scanExistingReleases, scanVersion } from "./scan/policy";
 import { type MarketSourceEntry, type PluginCompatibility, type PluginEntry, type PluginWarning, type RiskTag, type PluginRelease, type WarningCode, type MarketIndex, type PluginStats, type SearchEntry, type MarketPolicy } from "@/lib/types";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -24,7 +26,22 @@ import { renderSafeHtml } from "./lib/html";
 async function main(): Promise<void> {
   const policy = await readPolicy();
   const { lockPath } = lockDirectories();
-  const ctx = createBuildContext(policy, await readLock(lockPath));
+  // 规则版本从扫描器自己读，改动 Python 规则后旧缓存自动失效，不必记得同步改 TS。
+  // 读不到时不让整轮构建挂掉：置 0 表示「版本未知」，已有缓存一律不复用；
+  // 扫描本身若也起不来，调度层会逐条记跳过，索引照常产出。
+  let scanRuleVersion = 0;
+  let scanRuleError = "";
+  try {
+    scanRuleVersion = await readScanRuleVersion();
+  } catch (error) {
+    scanRuleError = error instanceof Error ? error.message : String(error);
+  }
+  const ctx = createBuildContext(policy, await readLock(lockPath), scanRuleVersion);
+  ctx.report.push(
+    scanRuleError
+      ? `- ⚠️ 扫描规则版本读取失败，本轮不复用扫描缓存：${scanRuleError.slice(0, 160)}`
+      : `- ℹ️ 安全扫描规则版本 ${ctx.scanRuleVersion}`
+  );
 
   // 配了索引镜像但凭证不全时 静默跳过会让人以为镜像在工作；主动关闭的不报
   if (
@@ -37,6 +54,7 @@ async function main(): Promise<void> {
   const { entries, errors } = checkEntries(await readEntryFiles(), policy);
   if (errors.length > 0) throw new Error(`market entries are invalid:\n${errors.join("\n")}`);
 
+  await ctx.scanCache.load();
   const workDir = await mkdtemp(join(tmpdir(), "zzzod-market-"));
   const plugins: BuiltPlugin[] = [];
   try {
@@ -102,6 +120,7 @@ export async function processPlugin(
   const warnings: PluginWarning[] = [];
   const releases = await listReleases(repo.full_name);
   await acceptNewReleases(ctx, entry, repo, releases, lock, workDir, warnings);
+  await scanExistingReleases(ctx, entry, repo, lock, workDir, warnings);
 
   const live = new Map(releases.map((release) => [release.tag_name, release]));
   const mirrors = parseMirrors(entry.mirror);
@@ -124,6 +143,8 @@ export async function processPlugin(
     const message = error instanceof Error ? error.message : String(error);
     ctx.report.push(`- ⚠️ \`${entry.id}\` 下架通知发送失败: ${message}`);
   }
+  // 收录和扫描都落定之后再补发通知：发失败不影响本轮收录，下轮还会重试
+  await notifyPendingSecurityReviews(ctx, entry, repo, lock);
   if (accepted.length === 0) {
     ctx.report.push(`- ⏸️ \`${entry.id}\` has no accepted release yet, not published`);
     return null;
@@ -277,6 +298,15 @@ export async function acceptNewReleases(
       const codes = result.errors.map((error) => `${error.code} ${error.detail}`).join("; ");
       reject(result.errors.some((error) => error.code === "ID_MISMATCH") ? "id_mismatch" : "invalid_package", codes);
       continue;
+    }
+
+    // 新版本在这一步扫一次，结果按 sha256 存进缓存，之后每轮直接复用
+    const scan = await scanVersion(ctx, entry.id, tag, sha256, async () => zipPath);
+    if (scan) {
+      if (scan.summary.block > 0) {
+        reject("invalid_package", `安全扫描拦截：${formatFindings(scan, "block")}`);
+        continue;
+      }
     }
 
     const versionCode = result.manifest.versionCode as number;

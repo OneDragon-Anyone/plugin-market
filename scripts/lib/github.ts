@@ -152,7 +152,8 @@ export const LABELS: Record<string, { color: string; description: string }> = {
   report: { color: "b60205", description: "插件举报" },
   appeal: { color: "bfd4f2", description: "申诉" },
   stale: { color: "cccccc", description: "插件仓库长期无法访问" },
-  revoked: { color: "e99695", description: "已收录版本的安装包与市场记录不一致" }
+  revoked: { color: "e99695", description: "已收录版本的安装包与市场记录不一致" },
+  security: { color: "d4c5f9", description: "安装包安全扫描命中待人工确认项" }
 };
 
 /** 已存在的标签 GitHub 返回 422，当成功处理 */
