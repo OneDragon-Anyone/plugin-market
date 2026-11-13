@@ -52,9 +52,9 @@ pnpm market:build
 
 ## 版本与引用规范
 
-- 数据仓引用本仓的可复用工作流时用主版本标签，标签随 `master` 前移，消费者不用改引用。
+- 数据仓引用本仓的可复用工作流默认写 `@master`，用本仓最新代码；想固定就换成 `@v1` 这样的 tag。这个 ref 只能写死，不能写变量。
 - 工作流里检出本仓代码用调用方 workflow 所在的提交（`job.workflow_sha`），工具代码与工作流文件不会错位。
-- 模板仓坐标与 tag 是工作流的输入参数（`template_repository` / `template_ref`），由调用方传，本仓不写死。
+- 模板仓坐标与 tag 由调用方传（`template_repository` / `template_ref`），本仓不写死版本。`template_ref` 留空时自动取模板仓最新的版本 tag。
 
 ---
 
