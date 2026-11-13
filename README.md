@@ -58,17 +58,6 @@ pnpm market:build
 
 ---
 
-## 安全扫描
-
-构建时对每个 Release ZIP 做静态 AST、依赖与恶意特征检查，纯 Python 标准库，不执行插件代码。结果按 sha256 缓存在 lock 分支，同一个包只扫一次；规则改了删掉 `.lock/scan-results.json` 就会整体重扫。
-
-- 阻断项拦下新版本，存量版本只告警不下架
-- 待确认项开一条 `[security]` issue，同一个包只通知一次，后续以评论追加
-- 存量版本分批补扫，每轮最多 20 个
-- 主程序环境里装好的包（清单随主程序的 `uv.lock` 更新）、市场上其它插件的包，都不算第三方依赖
-
----
-
 ## 国内镜像
 
 构建会把索引与封面另发一份到 [plugin-mirror](https://cnb.cool/OneDragon-Anyone/plugin-mirror)，与 GitHub Pages 上是同一份文件。仓库根目录的 `plugins.json` 与 `covers/` 供客户端读取。目标仓库配在数据仓 `market/policy.json` 的 `mirror.index` 里（`repo` + `branch`），凭证用环境变量 `CNB_TOKEN`，有该仓读写权限即可。没配或缺凭证时跳过镜像，构建照常出结果。
