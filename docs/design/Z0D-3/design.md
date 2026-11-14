@@ -1,17 +1,17 @@
-# 技术设计：插件管理后台与开发者 Portal 架构
+# 插件管理后台与开发者 Portal 技术设计
 
-- **需求来源**: Issue [Z0D-3] / [Z0D-9]
-- **架构决策依据**: 认证选用组织级 **GitHub App**；身份与权限由 GitHub 仓库管理关系直接派生；写入严格走 PR 且以公开 Git 仓库为唯一基准；作者侧 Portal 纳入范围；后端采用 **Django + DRF**；前端采用独立目录 **Vite SPA + Semi Design**，公开站一行不改
-- **设计负责人**: Architect
-- **状态**: 待评审（G1 阶段最终案）
-- **交付目标路径**: `docs/design/Z0D-3/design.md`
+- **需求来源**：Issue [Z0D-3] / [Z0D-9]
+- **核心决策**：认证选用组织级 GitHub App，权限派生自 GitHub 仓库权限；数据变更通过 PR 写入 `plugin-data` 仓库；作者 Portal 纳入二期范围；后端采用 Django + DRF，前端采用独立 Vite SPA（Semi Design），不修改公开静态站代码。
+- **设计负责人**：Architect
+- **状态**：待评审
+- **文档路径**：`docs/design/Z0D-3/design.md`
 
 ---
 
-## 1. 理解：系统当前做什么与核心决策演进
+## 1. 现状与设计决策
 
-### 1.1 现状架构分析
-`plugin-market` 前端是基于 Astro 7.x 框架构建的**纯静态站点**（`astro.config.mjs` 配置 `output: "static"`），采用 React 19 + Fluent UI 9 进行客户端组件渲染，部署于 GitHub Pages。数据源托管于 `OneDragon-Anyone/plugin-data` 仓库。
+### 1.1 现状分析
+`plugin-market` 前端基于 Astro 7.x 构建为静态站点（`astro.config.mjs` 中配置 `output: "static"`），客户端组件使用 React 19 和 Fluent UI 9 渲染，部署在 GitHub Pages。数据源托管于 `OneDragon-Anyone/plugin-data` 仓库。
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -33,47 +33,46 @@
 └─────────────────┴──────────────────────────────────────────────────────┘
 ```
 
-### 1.2 架构决策要点
+### 1.2 核心决策
 
-以下决策为本设计的技术基石，后续所有章节均以此为依据：
-
-1. **认证全面切换为 GitHub App（彻底放弃 OAuth App）**：
-   - 纳入作者侧 Portal 后，作者需要维护名下仓库的镜像与标签，必须强验证「该仓库属于我」。
-   - **GitHub App 的「安装到仓库」动作本身即是管理员证明**。无需在服务端编写繁琐易漏的仓库权限校验代码，作者授权范围精准限制在所选仓库，杜绝越权。
-   - GitHub App 创建在现有组织 `OneDragon-Anyone`（Organization）下。
-2. **身份与审核的四条基本机制**：
-   - **安装即授权**：作者在 GitHub 将 App 安装到仓库后，Portal 自动识别并呈现该插件；组织仓库需组织 owner 批准；
-   - **无独立账号系统**：谁是 GitHub 仓库管理员谁管该插件，GitHub 权限变更，Portal 动态对齐；
-   - **审核只审规则**：聚焦垃圾信息、合规性、保留 ID 与防抢注，不做耗时的人工代码审计；确立「视情况自动审批」标准（合规自动合并，可疑转人工）；
-   - **状态机覆盖完整生命周期**：从提交待审、在架、驳回，到暂停、废弃、彻底移除，每个状态都有明确的业务语义与构建表现。
-3. **写入模型：严格走 PR，以开放 Git 为唯一信任基准**：
-   - 所有变更必须通过 GitHub PR 写入 `plugin-data`，严禁直接 Commit 到 master/main 分支；
-   - Git 提交历史是不可篡改的唯一法定审计源，本地数据库流水仅作运营辅助，数据冲突以 Git 为准；
-   - 自动合并逻辑由服务端后端判断：合规变更提 PR 后自动 Squash Merge，高危变更进入双人复核。
-4. **作者侧 Portal 正式纳入（第二期范围明确）**：
-   - 严格限定作者自助可编辑字段范围：仅限 `tags`、`mirror`、`extraRisk`；
-   - 敏感字段（`status`、`pinned`）仅限管理员修改；抓取字段（Release、包大小、Readme）只读；
-   - 作者享有完整的黑盒透视权：查看名下插件、Warnings 告警、安装与下载数据看板。
-5. **后端技术栈定案：Django + DRF**：
-   - 支撑 21 个 REST API、用户鉴权/Token 轮转、审批状态机与审计流水；
-   - 利用 Django 成熟的 ORM 迁移、Serializer 数据校验与权限体系，大幅省去脚手架基础设施劳动。
-6. **前端技术栈：独立 Vite SPA + Semi Design**：
-   - 独立目录 `admin/`，采用 React 19 + `@douyinfe/semi-ui`，单一入口注入适配器；公开站（Astro + Fluent UI + Tailwind）**代码与配置一行不改**。
-
----
-
-## 2. 非目标：明确不做的事
-
-1. **不做深度代码审查**：收录与变更只审元数据规范、ID 合规与安全扫描命中，不设重量级人工源码审计流水线。理由是插件数量与提交频率远超人工审计容量，重审计会让整个流程不可持续。
-2. **不接管 Git 业务数据至 Django ORM**：`plugin-data` 中的插件 JSON 依然保存在 Git 仓库中。Django ORM 仅管理认证凭证、refresh token、审批流水与审计日志，绝不在数据库中对插件元数据另建主库。
-3. **不对公开静态站做任何破坏性侵入**：现有公开市场（Astro 纯静态、Fluent UI Win11 风格组件、Tailwind 样式、GitHub Pages 部署）保持 100% 独立，零改动。
-4. **作者端严禁越权修改核心元数据**：作者严禁自助修改 `status`（下架/恢复）、`pinned`（置顶）以及构建时锁定的 `releases`，严守安全底线。
+1. **认证选用 GitHub App**：
+   - 作者在 Portal 中维护名下仓库的镜像与标签，需要验证仓库所有权。
+   - GitHub App 安装到仓库的操作本身即代表管理授权，无需在后端单独实现复杂的仓库权限校验逻辑，授权范围也严格限制在已选仓库内。
+   - GitHub App 创建在 `OneDragon-Anyone` 组织下。
+2. **权限与审核机制**：
+   - 权限跟随仓库授权：作者将 App 安装到指定仓库后，Portal 即可读取并展示对应插件；组织仓库需组织拥有者批准。
+   - 无独立账号系统：直接以 GitHub 仓库管理员权限为准，权限变更时 Portal 自动同步。
+   - 审核聚焦规则校验：检查垃圾信息、规范合规性、保留 ID 与防抢注，不进行人工代码审查；符合规则自动合并，异常情况转人工复核。
+   - 覆盖完整生命周期：定义提交待审、在架、驳回、暂停、废弃、移除等状态，各状态对应明确的数据语义与构建表现。
+3. **数据写入严格通过 PR 完成**：
+   - 所有变更均通过 GitHub PR 写入 `plugin-data` 仓库，不直接提交到主分支。
+   - 以 Git 提交历史作为审计基准，数据库记录仅作为操作流水使用；数据不一致时以 Git 为准。
+   - 由服务端判断合并方式：合规变更自动 Squash Merge，高风险操作进入双人复核。
+4. **作者 Portal 纳入二期范围**：
+   - 限定作者可编辑字段：仅允许修改 `tags`、`mirror`、`extraRisk`。
+   - 核心字段（`status`、`pinned`）仅限管理员修改；抓取字段（Release、包大小、Readme）为只读。
+   - 提供可视化看板：作者可查看名下插件状态、构建警告信息（warnings）及安装下载趋势。
+5. **后端采用 Django + DRF**：
+   - 用于承载 21 个 REST API、Token 轮转、审批记录与审计流水。
+   - 使用 Django 自带的 ORM 数据迁移、Serializer 参数校验及权限拦截能力，减少基础功能开发量。
+6. **前端采用独立 Vite SPA（Semi Design）**：
+   - 在独立目录 `admin/` 下使用 React 19 和 `@douyinfe/semi-ui` 开发，通过单一入口注入适配器。
+   - 现有公开站（Astro + Fluent UI + Tailwind）的代码与配置保持不变。
 
 ---
 
-## 3. 建议改动：最小可行方案与技术架构设计
+## 2. 非目标
 
-### 3.1 总体架构拓扑图
+1. **不做人工源码审计**：仅校验元数据规范、ID 合规性与安全扫描结果，不开展人工源码审查。
+2. **数据库不作为插件元数据的主存储**：插件元数据仍保存在 `plugin-data` Git 仓库中。Django 仅存储认证凭证、Token 映射、审批记录与审计日志。
+3. **不修改公开静态站**：公开站（Astro、Fluent UI、Tailwind、GitHub Pages）保持独立，不调整其代码与构建配置。
+4. **作者不直接修改核心元数据**：作者端不可自行修改 `status`、`pinned` 及构建生成的 `releases`。
+
+---
+
+## 3. 详细设计
+
+### 3.1 系统架构
 
 ```mermaid
 flowchart TD
@@ -95,8 +94,8 @@ flowchart TD
         DRF["Django REST Framework (21 个路由)"]
         AppAuth["GitHub App 认证模块 (User Token + Refresh Token 轮转)"]
         AppJWT["GitHub App 私钥签发 (JWT -> Installation Token)"]
-        StateEngine["插件状态机与 Maker-Checker 审批引擎"]
-        GitWriter["GitHubWriter 服务 (提 PR + 视情况自动 Squash Merge)"]
+        StateEngine["状态变更与审批处理"]
+        GitWriter["GitHubWriter 服务 (提 PR 与自动 Squash Merge)"]
         SQLiteDB[("SQLite 数据库 (db.sqlite3: 会话/审批流水/审计)")]
 
         DRF --> AppAuth
@@ -126,59 +125,59 @@ flowchart TD
 
 ---
 
-### 3.2 身份与审核的四条基本机制
+### 3.2 身份认证与审核机制
 
-#### 1. 安装即授权
-- **实现原理**：GitHub App 安装在现有组织 `OneDragon-Anyone` 下。作者在提交或管理插件前，需在 GitHub 上将该 App 安装至其插件源码仓库（选择 "Only select repositories"）。
-- **零权限判断代码**：
-  - 后端调用 `GET /user/installations` 获取当前登录用户的全部安装实例；
-  - 遍历调用 `GET /user/installations/{installation_id}/repositories` 获取其授予管理权的仓库列表；
-  - 作者在 Portal 只能看到并编辑这些仓库对应的插件；若作者在 GitHub 上被移除管理员身份，安装列表中该仓库随之消失，Portal 权限即刻同步失效，**彻底无需在应用层编写易漏的权限判断逻辑**。
+#### 3.2.1 仓库管理权限判定
+GitHub App 安装在 `OneDragon-Anyone` 组织下。作者提交或管理插件前，需在 GitHub 将该 App 安装至插件源码仓库（选择 "Only select repositories"）。
 
-#### 2. 无独立账号体系
-- 彻底摒弃传统账密与独立用户表。所有用户身份唯一基于 GitHub 账号（`github_id`, `login`）。
-- **管理员判定**：环境变量 `ADMIN_USERS="alice,bob"` 白名单判定管理员身份；白名单内成员进入完整管理后台（审核台、全局插件管理、下架、作者封禁、全局 Policy）；
-- **作者判定**：拥有至少一个已安装该 GitHub App 的仓库，登录后自动展示专属的「我的插件」Portal 视图。
+判定流程如下：
+1. 后端调用 `GET /user/installations` 获取当前登录用户的全部安装实例。
+2. 遍历调用 `GET /user/installations/{installation_id}/repositories` 获取其授予管理权的仓库列表。
+3. 作者在 Portal 仅可查看和编辑上述仓库对应的插件。若作者在 GitHub 被取消仓库管理员身份，该仓库不会出现在安装列表中，Portal 权限随即失效，后端无需单独维护仓库权限映射。
 
-#### 3. 审核只审规则，视情况自动审批
-- 不实行耗费人力且不可持续的源码人工审计，改为规则化校验 + 自动化扫描：
-  - **规则校验项**：包体积不超过 `maxZipBytes`、封面合规、Manifest 必填字段、标签符合 `TAG_PATTERN` 且不超过 8 个、插件 ID 符合正则且不在 `reservedIds` 保留清单中、仓库未被封禁；
-  - **三类安全扫描**：静态安全扫描（敏感 API 检测）、依赖分析与已知恶意模式匹配；
-- **视情况自动审批流**：
-  - **自动过（Auto-Approve & Auto-Merge）**：规则校验 100% 通过且无扫描告警的作者自维护字段变更（`tags`, `mirror`, `extraRisk`），系统通过 `GitHubWriter` 自动创建分支、提交 JSON、提 PR 并立即自动 Squash Merge 入库；
-  - **转人工（Escalate to Human）**：命中高危扫描、插件 ID 冲突/争议、涉及 `suspended` / `removed` 状态下架，或者涉及作者封禁与 Policy 全局修改，强制转入自建审批队列，走双人复核。
+#### 3.2.2 角色划分
+系统不设立独立账号体系，基于 GitHub 账号（`github_id`、`login`）识别用户：
+- **管理员**：通过环境变量 `ADMIN_USERS` 配置白名单用户名（如 `alice,bob`）。管理员可访问审核台、全局插件管理、下架、作者封禁及全局策略配置（Policy）。
+- **插件作者**：拥有至少一个已安装该 GitHub App 的仓库。登录后可进入 Portal 查看并管理名下插件。
 
-#### 4. 状态机与生命周期映射
-状态机覆盖插件从提交到退役的完整生命周期，与 `plugin-data` 现有字段取值对应如下：
+#### 3.2.3 规则校验与分流审批
+插件收录与变更采用规则校验结合自动化扫描的机制：
+- **规则校验项**：包体积不超过 `maxZipBytes`、封面图片合规、Manifest 包含必填字段、标签符合 `TAG_PATTERN` 且不超过 8 个、插件 ID 符合命名正则且不在 `reservedIds` 清单中、仓库未被封禁。
+- **安全扫描项**：静态敏感 API 检测、依赖分析与恶意模式匹配。
+- **审批分流**：
+  - **自动审批并合并**：规则校验通过且无安全告警的作者自维护字段变更（`tags`、`mirror`、`extraRisk`），由服务端通过 `GitHubWriter` 自动创建分支、提交 JSON、创建 PR 并自动 Squash Merge。
+  - **转入人工复核**：触发高危扫描、插件 ID 冲突、修改状态至 `suspended` 或 `removed`、作者封禁、修改全局 Policy 等操作，写入 `PendingOp` 记录，由双人复核（Maker-Checker）审批后执行。
 
-| 生命周期阶段 | `plugin-data` 状态 | 业务语义 | 构建与搜索表现 (`scripts/build.ts`) |
+#### 3.2.4 插件生命周期与状态映射
+
+| 阶段 | 数据状态 | 说明 | 构建表现 |
 | :--- | :--- | :--- | :--- |
-| **`pending`** | *（中间态/Issue/PR）* | 待审核申请 | 仍在 Issue/PR 或 `pending_ops` 中，未写入正式目录 |
-| **`listed`** | **`listed`** | 正常在架 | 进入 `search-index.json`、`plugins.json`，搜索展示 |
-| **`rejected`** | *（PR 关闭 / Issue 拒绝）* | 审核被拒 | 不入库，关闭 PR 并由机器人回帖说明原因 |
-| **`suspended`** | **`suspended`** | 违规暂停/维护 | 从 `search-index.json` 剔除；`plugins.json` 标灰；**保留 ID 绑定防抢注** |
-| **`archived`** | **`deprecated`** | 废弃归档 | 进入搜索与列表，但展示明显「已废弃」警示，不推荐新用户使用 |
-| *（特殊）* | **`hidden`** | 隐藏直链 | 从搜索排除，不公开推荐，仅持直链可访问详情与下载 |
-| *（特殊）* | **`removed`** | 彻底下架 | 构建彻底跳过（行 43：`entry.status === 'removed' continue`），完全抹除 |
+| 申请中 | pending | 待审核，处于 Issue/PR 或待审批记录中，未写入正式目录 | 不参与构建 |
+| 正常在架 | listed | 正常上架 | 写入 `search-index.json` 和 `plugins.json`，可正常搜索 |
+| 审核拒绝 | rejected | 申请被拒绝，关闭 PR 并回复说明原因 | 不入库 |
+| 暂停服务 | suspended | 因违规或维护暂时暂停，保留 ID 绑定防止抢注 | 从 `search-index.json` 剔除；在 `plugins.json` 中标记为停用 |
+| 废弃归档 | deprecated | 插件已废弃，不推荐新用户使用 | 写入搜索索引与列表，展示废弃提示 |
+| 隐藏 | hidden | 不在公开列表中推荐，仅可通过直链访问和下载 | 从 `search-index.json` 排除 |
+| 彻底移除 | removed | 彻底下架，数据保留但构建阶段完全跳过 | `scripts/build.ts` 忽略此记录，不输出到索引 |
 
 ---
 
-### 3.3 认证体系与 Token 处理（GitHub App）
+### 3.3 认证与 Token 管理
 
-#### 3.3.1 GitHub App 密钥与配置
-- **所属组织**：`OneDragon-Anyone`（Organization）；
-- **凭证清单**（存放在 arm-1 环境变量，严禁进镜像与 Git）：
-  - `GITHUB_APP_ID`：GitHub App 唯一 ID；
-  - `GITHUB_APP_CLIENT_ID`：OAuth Client ID；
-  - `GITHUB_APP_CLIENT_SECRET`：OAuth Client Secret；
-  - `GITHUB_APP_PRIVATE_KEY`：GitHub App 私钥（RSA PEM 格式，用于生成 App JWT 进而换取 Installation Token）；
-  - `GITHUB_APP_WEBHOOK_SECRET`：接收 App 安装/卸载 Webhook 校验（可选扩展）。
+#### 3.3.1 GitHub App 凭证配置
+- 所属组织：`OneDragon-Anyone`
+- 凭证配置（通过 arm-1 环境变量注入，不提交至 Git 或打包进镜像）：
+  - `GITHUB_APP_ID`：GitHub App ID
+  - `GITHUB_APP_CLIENT_ID`：OAuth Client ID
+  - `GITHUB_APP_CLIENT_SECRET`：OAuth Client Secret
+  - `GITHUB_APP_PRIVATE_KEY`：GitHub App 私钥（RSA PEM 格式，用于生成 App JWT 并换取 Installation Token）
+  - `GITHUB_APP_WEBHOOK_SECRET`：Webhook 签名校验密钥（可选）
 
-#### 3.3.2 令牌生命周期与 Refresh 机制
-GitHub App 的 User-to-Server Token 默认具有 **8 小时过期时间**（附带 `refresh_token`，有效期 6 个月）：
-- **换票请求**：前端回传 `code`，后端请求 `https://github.com/login/oauth/access_token` 获取 `{ access_token, expires_in, refresh_token, refresh_token_expires_in }`；
-- **存储与会话**：Django 利用加密字段在 SQLite 中维护用户的 token 映射；对外向前端签发标准的 Django REST Token 或 JWT；
-- **自动 Refresh 机制**（约 20 行核心逻辑）：
+#### 3.3.2 Token 生命周期与刷新机制
+GitHub App 的 User-to-Server Token 有效期为 8 小时，同时返回有效期为 6 个月的 `refresh_token`：
+- **换票请求**：前端传回授权 `code`，后端请求 `https://github.com/login/oauth/access_token` 获取 `access_token`、`expires_in`、`refresh_token` 与 `refresh_token_expires_in`。
+- **存储与会话**：Django 将 Token 加密后保存在 SQLite 中，向前端签发 Django REST Token 或 JWT。
+- **自动刷新**：在 Token 到期前 5 分钟内，使用 `refresh_token` 换取新令牌：
   ```python
   def ensure_valid_token(user_token_record):
       if now() >= user_token_record.expires_at - timedelta(minutes=5):
@@ -194,15 +193,15 @@ GitHub App 的 User-to-Server Token 默认具有 **8 小时过期时间**（附�
           user_token_record.save()
       return user_token_record.access_token
   ```
-- **服务端写数据仓凭证**：服务端利用 `GITHUB_APP_PRIVATE_KEY` 签发 JWT，调用 `POST /app/installations/{data_repo_install_id}/access_tokens`，动态生成专用于写入 `OneDragon-Anyone/plugin-data` 的短效 Installation Token（1 小时自动过期，权限细粒度限制为仅该仓 `contents:write` + `pull_requests:write`）。
+- **数据仓库写入凭证**：服务端利用 `GITHUB_APP_PRIVATE_KEY` 签发 JWT，调用 `POST /app/installations/{data_repo_install_id}/access_tokens` 动态生成用于写入 `OneDragon-Anyone/plugin-data` 的短期 Installation Token（有效期 1 小时，权限限制为该仓库的 `contents:write` 与 `pull_requests:write`）。
 
 ---
 
-### 3.4 写入模型：严格走 PR，以开放 Git 为基准
+### 3.4 数据写入流程
 
-所有对 `plugin-data` 的数据修改必须遵守以下铁律：
-1. **禁止直接 Commit 主分支**：任何改动必须动态检出临时分支 `portal/<action>-<id>-<ts>`，通过 Git Commit 记录变更，并向默认分支创建 PR。
-2. **规范化 Commit 审计签名**：
+对 `plugin-data` 的数据修改遵循以下规则：
+1. **不直接提交主分支**：每次改动创建临时分支 `portal/<action>-<id>-<ts>`，提交变更后向主分支创建 PR。
+2. **Commit 格式规范**：
    ```text
    portal(<target>): update <id> by @<operator>
 
@@ -213,44 +212,41 @@ GitHub App 的 User-to-Server Token 默认具有 **8 小时过期时间**（附�
    Checker: @<checker_username> (if approved)
    Timestamp: <ISO-8601 UTC>
    ```
-3. **视情况自动审批与合并**：
-   - 作者修改自身插件的 `tags` / `mirror` / `extraRisk`：经规则校验无误后，服务端提 PR 并立即自动 Squash Merge，删除临时分支；
-   - 管理员触发 `hidden` / `deprecated`（选择跳过复核）：服务端提 PR 并自动 Squash Merge；
-   - 管理员触发 `suspended` / `removed` 或封禁作者：强制写入 Django `PendingOp` 表，待 Checker 审批通过后，再由服务端调用 GitHub API 自动提 PR 并 Squash Merge。
-4. **Git 是唯一真实数据基准**：
-   - 数据库中的审批流水与状态仅为运营中间态；
-   - 若数据库记录与 GitHub Git 历史不一致，**绝对以 Git 历史为唯一准绳**。
+3. **合并处理**：
+   - 作者修改自身插件的 `tags`、`mirror`、`extraRisk`：通过规则校验后，服务端创建 PR 并自动 Squash Merge，删除临时分支。
+   - 管理员修改 `hidden` 或 `deprecated` 状态：服务端创建 PR 并自动 Squash Merge。
+   - 管理员修改 `suspended`、`removed` 状态或封禁作者：写入 `PendingOp` 表，待 Checker 审核通过后，服务端创建 PR 并 Squash Merge。
+4. **以 Git 为数据基准**：数据库中的记录作为操作流水使用。如果数据库与 Git 提交历史产生分歧，以 `plugin-data` 仓库中的 Git 历史为准。
 
 ---
 
-### 3.5 作者侧 Portal 范围与能力矩阵（第二期）
+### 3.5 作者 Portal 字段权限与功能
 
-作者登录后进入「开发者 Portal」视图，严格根据字段性质施加权限隔离：
+作者登录后进入 Portal 视图，字段权限定义如下：
 
-| 数据字段 | 作者能否修改 | 管理员能否修改 | 修改机制与流转规则 |
+| 字段 | 作者权限 | 管理员权限 | 处理规则 |
 | :--- | :---: | :---: | :--- |
-| **`mirror`（镜像源）** | **✅ 可以** | ✅ 可以 | 作者只能增加/修改 CNB 或 Gitee 镜像。合规校验通过后自动提 PR 并自动合并。 |
-| **`tags`（分类标签）** | **✅ 可以** | ✅ 可以 | 最多 8 个，需满足小写字母与连字符正则。合规自动提 PR 并自动合并。 |
-| **`extraRisk`（附加风险）** | **✅ 可以** | ✅ 可以 | 只能在合法风险标签集合中自愿声明。合规自动合并。 |
-| **`status`（状态）** | **❌ 禁止** | **✅ 仅管理** | 包含 `suspended`（暂停）、`removed`（彻底下架）等，属于核心管理权。 |
-| **`pinned`（置顶）** | **❌ 禁止** | **✅ 仅管理** | 首页置顶推荐权，仅管理员可调整。 |
-| **`readmeHtml` / `cover`** | **❌ 禁止** | **❌ 禁止** | **构建时自动抓取**作者 Release 资源与仓库 Readme，人工禁止直接修改。 |
-| **`warnings` / `release`** | **❌ 禁止** | **❌ 禁止** | 构建校验与安全扫描自动产出，双方均不可篡改。 |
+| `mirror` | 可修改 | 可修改 | 仅支持 CNB 或 Gitee 镜像源；校验通过后自动提 PR 并合并 |
+| `tags` | 可修改 | 可修改 | 最多 8 个，需符合小写字母与连字符正则；校验通过后自动提 PR 并合并 |
+| `extraRisk` | 可修改 | 可修改 | 仅可从预定义风险标签集合中选择；校验通过后自动提 PR 并合并 |
+| `status` | 只读 | 可修改 | 包含 `suspended`、`removed` 等状态变更，需管理员操作 |
+| `pinned` | 只读 | 可修改 | 置顶状态仅管理员可调整 |
+| `readmeHtml`、`cover` | 只读 | 只读 | 构建脚本自动从 Release 和仓库抓取，不支持手动修改 |
+| `warnings`、`release` | 只读 | 只读 | 由构建校验与安全扫描自动生成，不支持手动修改 |
 
-**作者可视化看板能力**（解决以往完全黑箱问题）：
-- 查看名下全部插件的在架状态与审核历史；
-- 查看构建系统反馈的 `warnings` 详情（如版本号未递增、资源哈希不匹配、文件尺寸超标等）；
-- 查看该插件的全网下载量走势、GitHub Star 数及安装趋势图表。
+**看板功能**：
+- 查看名下插件的在架状态与历史审核记录。
+- 查看构建系统生成的 `warnings` 详情（如版本号未递增、文件大小超标、哈希不匹配等）。
+- 查看插件下载量走势、GitHub Star 数及安装趋势。
 
 ---
 
-### 3.6 后端架构：Django + DRF 契约设计
+### 3.6 后端服务设计
 
-#### 3.6.1 为什么选 Django + DRF
-- **21 个 API 路由快速承载**：利用 DRF 的 `APIView` 与 `ViewSet` 快速产出规范的 RESTful 接口；
-- **成熟的开箱即用基础设施**：内置数据库 ORM 迁移（SQLite）、声明式 Serializer 入参校验、标准 HTTP 状态码与异常响应格式化；
-- **开箱即用鉴权类**：自定义 `GitHubAppAuthentication` 与 `IsRepoAdminOrManager` 权限拦截类；
-- **架构解耦**：Git 写入（`GitHubWriter`）作为独立 Python Service 模块，纯粹处理 Git/PR 自动化，与 Django 业务模型保持正交。
+#### 3.6.1 技术选型
+- **API 承载**：使用 Django REST Framework（DRF）定义 21 个 RESTful 接口。
+- **基础功能支持**：利用 Django 内置的 ORM、数据迁移、Serializer 参数校验和权限拦截机制。
+- **模块解耦**：Git 操作封装为独立的 `GitHubWriter` 服务，与 Django 数据模型解耦。
 
 #### 3.6.2 数据模型定义（`models.py`）
 ```python
@@ -296,142 +292,139 @@ class PendingOp(models.Model):
     applied_at = models.DateTimeField(null=True, blank=True)
 ```
 
-#### 3.6.3 21 个 RESTful API 契约全景清单
+#### 3.6.3 RESTful API 清单
 
-| 模块 | 方法与路径 | 访问权限 | 功能说明 |
+| 模块 | 方法与路径 | 权限 | 说明 |
 | :--- | :--- | :--- | :--- |
 | **认证与用户** | `GET /api/v1/auth/login-url` | 公开 | 获取 GitHub App OAuth 授权跳转 URL |
-| | `POST /api/v1/auth/exchange` | 公开 | 换票、建立 Session、同步用户身份与安装仓库 |
-| | `GET /api/v1/auth/me` | 登录用户 | 获取当前登录者身份、是否管理员及授权管理的仓库列表 |
-| | `POST /api/v1/auth/logout` | 登录用户 | 注销会话并废弃前端 Token |
-| **作者 Portal** | `GET /api/v1/portal/plugins` | 作者/管理 | 获取名下管理的插件列表、状态与告警摘要 |
-| | `GET /api/v1/portal/plugins/:id` | 仓库管理作者 | 获取该插件详情、Warnings 历史与安装/下载趋势数据 |
-| | `POST /api/v1/portal/plugins/:id/metadata` | 仓库管理作者 | **作者自助修改** `tags`, `mirror`, `extraRisk`（合规自动提 PR 并合并） |
-| | `POST /api/v1/portal/plugins/:id/recheck` | 仓库管理作者 | 为作者仓库重新触发 `/recheck` 扫描检测 |
-| **管理员审核台**| `GET /api/v1/admin/submissions` | 仅管理员 | 获取开放待审的 Issue 列表及三类扫描结果 |
-| | `POST /api/v1/admin/submissions/:issue/review` | 仅管理员 | 审核通过（提收录 PR）或拒绝（关闭 Issue） |
-| **管理员插件管理**| `GET /api/v1/admin/plugins` | 仅管理员 | 全网插件列表过滤、搜索与状态查询 |
-| | `POST /api/v1/admin/plugins/:id/status` | 仅管理员 (Maker) | **变更插件状态（下架/恢复）**，高危强制进入审批队列 |
-| | `POST /api/v1/admin/plugins/:id/pin` | 仅管理员 | 切换置顶状态 |
-| | `POST /api/v1/admin/plugins/:id/override`| 仅管理员 | 管理员强制覆盖修改插件元数据 |
-| **Maker-Checker**| `GET /api/v1/admin/ops` | 仅管理员 | 查询审批队列列表（`status=pending|applied|all`） |
-| | `POST /api/v1/admin/ops/:id/review` | 仅管理员 (Checker)| **审批操作**（`maker != checker` 强核验、重新核验 `before`、自动 Merge） |
-| **作者与规则治理**| `GET /api/v1/admin/authors` | 仅管理员 | 获取作者列表与提交统计 |
-| | `POST /api/v1/admin/authors/:user/ban` | 仅管理员 (Maker) | 封禁作者（拉黑用户与 repoId，需复核） |
-| | `GET /api/v1/admin/policy` | 仅管理员 | 获取全局规则 `market/policy.json` |
-| | `POST /api/v1/admin/policy` | 仅管理员 (Maker) | 修改全局规则（保留 ID、限流、大小限制） |
-| **数据与运维** | `GET /api/v1/admin/dashboard` | 仅管理员 | 管理端全网统计看板数据聚合 |
+| | `POST /api/v1/auth/exchange` | 公开 | 接收授权码换取 Token，建立会话并同步用户所管仓库 |
+| | `GET /api/v1/auth/me` | 登录用户 | 获取当前用户身份、管理员标志及授权仓库列表 |
+| | `POST /api/v1/auth/logout` | 登录用户 | 注销当前会话 |
+| **作者 Portal** | `GET /api/v1/portal/plugins` | 作者或管理员 | 获取名下管理的插件列表、状态及警告摘要 |
+| | `GET /api/v1/portal/plugins/:id` | 仓库作者 | 获取指定插件详情、warnings 记录及统计数据 |
+| | `POST /api/v1/portal/plugins/:id/metadata` | 仓库作者 | 修改 `tags`、`mirror`、`extraRisk`（校验通过后自动提交 PR 并合并） |
+| | `POST /api/v1/portal/plugins/:id/recheck` | 仓库作者 | 重新触发对该仓库的安全与规则扫描 |
+| **管理员审核台** | `GET /api/v1/admin/submissions` | 仅管理员 | 获取待审 Issue 列表及扫描结果 |
+| | `POST /api/v1/admin/submissions/:issue/review` | 仅管理员 | 审核通过（创建收录 PR）或拒绝（关闭 Issue） |
+| **管理员插件管理** | `GET /api/v1/admin/plugins` | 仅管理员 | 获取全量插件列表，支持筛选与搜索 |
+| | `POST /api/v1/admin/plugins/:id/status` | 仅管理员 (Maker) | 变更插件状态；高危状态进入审批队列 |
+| | `POST /api/v1/admin/plugins/:id/pin` | 仅管理员 | 切换插件置顶状态 |
+| | `POST /api/v1/admin/plugins/:id/override` | 仅管理员 | 强制修改插件元数据 |
+| **Maker-Checker** | `GET /api/v1/admin/ops` | 仅管理员 | 查询审批队列，支持根据状态过滤（`pending`、`applied`、`all`） |
+| | `POST /api/v1/admin/ops/:id/review` | 仅管理员 (Checker) | 审批操作（校验 `maker != checker`，比对变更前数据基线后自动合并 PR） |
+| **作者与规则治理** | `GET /api/v1/admin/authors` | 仅管理员 | 获取作者列表及提交统计 |
+| | `POST /api/v1/admin/authors/:user/ban` | 仅管理员 (Maker) | 封禁作者（拉黑用户与仓库，需复核） |
+| | `GET /api/v1/admin/policy` | 仅管理员 | 读取全局规则 `market/policy.json` |
+| | `POST /api/v1/admin/policy` | 仅管理员 (Maker) | 修改全局规则（保留 ID、限流、大小限制，需复核） |
+| **数据与运维** | `GET /api/v1/admin/dashboard` | 仅管理员 | 获取全网插件与提交数据看板 |
 | | `POST /api/v1/admin/sync` | 仅管理员 | 手动触发 `plugin-data` 静态索引构建流水线 |
 
 ---
 
-### 3.7 前端架构：独立 Vite SPA + Semi Design（`admin/`）
+### 3.7 前端结构
 
-#### 3.7.1 独立 Vite SPA 架构规范
-- **目录落点**：仓库根目录下新建独立工程 `admin/`；
-- **技术栈**：React 19 + TypeScript + Vite + `@douyinfe/semi-ui` + `@douyinfe/semi-icons`；
-- **React 19 完美适配**：在 `admin/src/main.tsx` 文件首行引入 `@douyinfe/semi-ui/react19-adapter`；
-- **公开站零修改**：完全不引入 Tailwind，公开站（Astro + Fluent UI + Tailwind）**代码与配置一行不改**，构建完全独立解耦。
+#### 3.7.1 工程结构与依赖
+- **目录位置**：仓库根目录下新建独立工程 `admin/`。
+- **技术栈**：React 19、TypeScript、Vite、`@douyinfe/semi-ui`、`@douyinfe/semi-icons`。
+- **React 19 适配**：在 `admin/src/main.tsx` 文件首行引入 `@douyinfe/semi-ui/react19-adapter`。
+- **独立构建**：`admin/` 与公开站点完全隔离，公开站（Astro + Fluent UI + Tailwind）的代码与构建配置保持不变。
 
-#### 3.7.2 视图组织与路由划分
-- **/login**：GitHub App 授权登录页；
-- **/portal**：**开发者 Portal 视图**（面向普通作者）：
-  - 授权仓库插件列表、安装 App 引导；
-  - 插件元数据自助编辑（`tags`、`mirror`、`extraRisk`）；
-  - Warnings 警示查看与数据图表展示；
-- **/admin**：**管理员视图**（仅白名单管理员可见）：
+#### 3.7.2 路由结构
+- `/login`：GitHub App 授权登录页。
+- `/portal`：作者 Portal 视图：
+  - 授权仓库插件列表与 App 安装引导；
+  - 插件元数据编辑（`tags`、`mirror`、`extraRisk`）；
+  - warnings 提示与使用数据图表。
+- `/admin`：管理员后台（需在管理员白名单中）：
   - 审核台（Submissions）；
-  - 插件管理与高危下架（Plugins）；
-  - 审批中心（PendingOps：Maker-Checker）；
-  - 作者治理与全局规则（Authors & Policy）；
-  - 全网数据看板（Dashboard）。
+  - 插件管理与状态调整（Plugins）；
+  - 审批中心（PendingOps 双人复核）；
+  - 作者管理与全局策略（Authors & Policy）；
+  - 数据统计（Dashboard）。
 
 ---
 
 ## 4. 受影响组件与文件清单
 
-| 路径 / 模块 | 变更类型 | 说明与职责 | 对公开站影响 (`pnpm build`) |
+| 路径 / 模块 | 变更类型 | 说明 | 对公开站构建的影响 |
 | :--- | :--- | :--- | :--- |
-| `admin/` (完整目录) | **新增** | 独立的 Vite SPA 管理后台与开发者 Portal（React 19 + Semi Design） | **完全解耦，零影响**。公开站构建完全不触碰该目录。 |
-| `services/portal-backend/` | **新增** | **Django + DRF 后端服务**：承载 21 个 API、GitHub App JWT/Refresh 认证、SQLite 审批模型、Git PR 写入服务 | **独立 Python 服务**，不进入前端静态打包。 |
-| `services/portal-backend/Dockerfile` | **新增** | 后端 Docker 部署镜像文件（Python 3.12-slim），运行于 arm-1 | 独立容器。 |
-| `scripts/lib/market.ts` / `src/lib/types.ts` | **复用/参照** | 复用现有的 `MarketStatus`, `MarketPolicy`, `MarketSourceEntry` 类型与校验规范 | 保持现有一致，无需改动。 |
-| `src/` (公开站代码) | **无改动** | 保持现有 Astro + React Fluent UI + Tailwind 纯静态架构原样不变 | **零破坏，零修改**。 |
-| `scripts/build.ts` | **无改动** | 现有构建脚本已原生支持 `suspended` 过滤与 `removed` 彻底排除 | **零破坏，零修改**。 |
+| `admin/` | 新增 | 独立的 Vite SPA，包含管理后台与作者 Portal（React 19 + Semi Design） | 无影响，公开站构建不涉及该目录 |
+| `services/portal-backend/` | 新增 | Django + DRF 后端服务，负责 21 个 API、Token 认证轮转、审批记录与 Git PR 写入 | 无影响，后端为独立 Python 服务 |
+| `services/portal-backend/Dockerfile` | 新增 | 后端 Docker 镜像定义（Python 3.12-slim），部署于 arm-1 节点 | 无影响 |
+| `scripts/lib/market.ts`、`src/lib/types.ts` | 复用/参照 | 复用 `MarketStatus`、`MarketPolicy`、`MarketSourceEntry` 类型定义与校验规则 | 无改动 |
+| `src/` | 无改动 | 保持现有 Astro + React Fluent UI + Tailwind 静态站点代码不变 | 无改动 |
+| `scripts/build.ts` | 无改动 | 原生支持 `suspended` 状态标记与 `removed` 状态排除 | 无改动 |
 
 ---
 
-## 5. 实现步骤：给 Dev 的具体开发步骤
+## 5. 开发步骤
 
-### 阶段一：后端 Django + DRF 服务搭建 (`services/portal-backend/`)
-1. **初始化 Django 项目与数据库模型**：
-   - 使用 `django-admin startproject` 初始化项目，配置 SQLite 数据库；
-   - 编写 `models.py`（`UserProfile`, `GitHubToken`, `PendingOp`）并执行 `makemigrations` 与 `migrate`。
+### 5.1 后端服务开发（`services/portal-backend/`）
+1. **初始化 Django 项目与数据模型**：
+   - 使用 `django-admin startproject` 创建项目，配置 SQLite 数据库；
+   - 在 `models.py` 中定义 `UserProfile`、`GitHubToken`、`PendingOp`，执行数据迁移。
 2. **实现 GitHub App 认证与 Token 自动轮转**：
-   - 封装 GitHub App JWT 生成逻辑（使用 `GITHUB_APP_PRIVATE_KEY` 签发）；
-   - 编写 OAuth 回调 exchange 接口，实现 8 小时过期前自动 `refresh_token` 的轮转中间件；
-   - 封装 `GET /user/installations` 与 repositories 查询，确定作者有权管理的仓库列表。
-3. **实现 `GitHubWriter` PR 写入与自动合并服务**：
-   - 基于 GitHub REST API 封装分支创建、文件 Commit、提 PR 以及 Squash Merge 逻辑。
-4. **编写 21 个 DRF 视图与权限类**：
-   - 编写 `IsRepoAdminOrManager`：校验用户是否对该仓库拥有 GitHub App 安装权限；
-   - 编写 Maker-Checker 状态机视图：`maker != checker` 强校验、`before` 真实基线核对、双写更新。
+   - 使用 `GITHUB_APP_PRIVATE_KEY` 签发 JWT；
+   - 编写 OAuth 授权换票接口，实现过期自动使用 `refresh_token` 刷新的逻辑；
+   - 调用 `GET /user/installations` 及 repositories 接口，获取用户具备管理权限的仓库列表。
+3. **实现 `GitHubWriter` 写入服务**：
+   - 基于 GitHub REST API 实现分支创建、文件提交、创建 PR 与 Squash Merge 逻辑。
+4. **实现 DRF 接口与权限拦截**：
+   - 编写 `IsRepoAdminOrManager` 权限类，验证用户是否对仓库拥有 GitHub App 安装权限；
+   - 实现 Maker-Checker 审批接口：校验 `maker != checker`，比对变更前数据基线，执行数据更新。
 
-### 阶段二：前端独立 Vite SPA 开发 (`admin/`)
-1. **搭建独立 SPA 脚手架**：
-   - 初始化 Vite + React 19 + Semi Design 项目；
-   - 在 `admin/src/main.tsx` 首行注入 `@douyinfe/semi-ui/react19-adapter`。
-2. **实现开发者 Portal 视图**：
-   - 插件列表、Warnings 详情展示、`tags`/`mirror` 编辑表单、安装 App 引导。
-3. **实现管理员后台视图**：
-   - 审核台、插件下架/状态变更弹窗、审批中心（Maker-Checker 复核与理由录入）、全局规则与作者治理。
+### 5.2 前端开发（`admin/`）
+1. **初始化项目脚手架**：
+   - 创建 Vite + React 19 + Semi Design 项目；
+   - 在 `admin/src/main.tsx` 首行引入 `@douyinfe/semi-ui/react19-adapter`。
+2. **开发作者 Portal 视图**：
+   - 实现插件列表展示、App 安装引导、Warnings 提示查看及 `tags`/`mirror` 编辑表单。
+3. **开发管理员后台视图**：
+   - 实现审核台、插件状态管理弹窗、双人审批界面（Maker-Checker 复核与理由记录）、全局规则与作者管理。
 
-### 阶段三：构建解耦与环境部署
-1. **验证公开站零破坏**：
-   - 根目录下运行 `pnpm check` 与 `pnpm build`，确保 Astro 纯静态站完全不受影响。
-2. **部署 arm-1 容器**：
-   - 构建 `portal-backend` Docker 镜像，挂载 SQLite 存储卷，配置 cloudflared 代理到后端端口。
+### 5.3 构建验证与部署
+1. **验证公开站构建**：
+   - 在根目录下运行 `pnpm check` 与 `pnpm build`，确认静态站点构建正常。
+2. **部署后端容器**：
+   - 构建 `portal-backend` Docker 镜像，挂载 SQLite 存储目录，配置 cloudflared 将流量代理至后端端口。
 
 ---
 
-## 6. 验证方式：给 Tester 的验证计划
+## 6. 验证方案
 
-### 6.1 身份模型与权限隔离验证
-1. **安装即授权验证**：
-   - 作者账号将 GitHub App 安装到自己的仓库 A，未安装到仓库 B；
-   - 登录 Portal，确认界面仅列出仓库 A 对应的插件，仓库 B 不可操作；
-   - 作者尝试调用 API 直接修改仓库 B 的数据，确认后端鉴权类返回 `403 Forbidden`。
-2. **作者自助修改人工字段验证**：
-   - 作者修改仓库 A 插件的 `mirror` 镜像源，提交保存；
-   - 验证规则校验通过后，服务端以 GitHub App 身份自动创建分支提 PR 并完成自动 Squash Merge；
-   - 验证变更成功写入 `plugin-data` 且无人工干预。
-3. **作者越权修改敏感字段拦截验证**：
-   - 作者尝试修改 `status`（下架）或 `pinned`，确认接口直接报错拒绝（400/403）。
+### 6.1 权限与字段控制验证
+1. **仓库管理权限判定验证**：
+   - 用户将 GitHub App 安装到仓库 A，未安装到仓库 B；
+   - 登录 Portal，确认仅列出仓库 A 对应的插件；
+   - 调用接口尝试修改仓库 B 的数据，确认返回 403 Forbidden。
+2. **作者修改受限字段验证**：
+   - 作者修改仓库 A 插件的 `mirror` 镜像源并提交；
+   - 验证规则校验通过后，系统自动创建 PR 并完成 Squash Merge，变更写入 `plugin-data`。
+3. **作者修改非权限字段拦截验证**：
+   - 作者尝试修改 `status` 或 `pinned`，确认接口返回 400 或 403。
 
-### 6.2 Maker-Checker 审批闭环验证
-1. **高危下架双人复核流程**：
-   - 管理员 A 将插件状态变更为 `suspended`，确认系统自动创建 `PendingOp`，状态为 `pending`；
-   - 管理员 A 尝试自己批准，确认后端返回 `403 Forbidden`（`maker != checker`）；
-   - 管理员 B 填写批准理由并确认，服务端校验 `before` 基线通过后自动提 PR 并完成合并；
-   - 静态站构建后验证该插件从搜索索引中剔除。
-2. **Token 自动轮转（Refresh Token）验证**：
-   - 模拟 User Token 过期（调整数据库 `expires_at`），发起 API 请求，验证系统自动使用 `refresh_token` 换取新令牌且请求无感完成。
+### 6.2 审批流程与 Token 刷新验证
+1. **高危操作双人复核流程验证**：
+   - 管理员 A 将插件状态变更为 `suspended`，确认系统生成 `PendingOp` 记录且状态为 `pending`；
+   - 管理员 A 尝试执行批准操作，确认接口拒绝（`maker != checker` 返回 403）；
+   - 管理员 B 填写理由并批准，确认数据基线校验通过后自动创建 PR 并合并；
+   - 触发静态站构建，确认该插件从搜索索引中移除。
+2. **Token 自动刷新验证**：
+   - 手动将数据库中的 `expires_at` 修改为过期时间，调用 API，确认系统自动使用 `refresh_token` 换取新令牌，请求正常响应。
 
 ---
 
 ## 7. 风险与已知边界情况
 
-| 风险项 | 潜在影响 | 架构防御与应对策略 |
+| 风险 | 影响 | 应对措施 |
 | :--- | :--- | :--- |
-| **GitHub App 私钥泄露** | 私钥泄露可导致整个组织和数据仓被越权访问。 | 1. 私钥仅以环境变量注入 arm-1 生产机，严禁写入 Git、镜像层或日志；<br>2. App 安装权限精确限制在 `OneDragon-Anyone/plugin-data` 单仓写入。 |
-| **安装即授权的权限延迟** | 用户在 GitHub 卸载 App 后，Portal 端存在短时间缓存未及时同步。 | 1. 关键写操作前实时调用 GitHub API 校验安装归属；<br>2. 后续可配置 GitHub App Webhook（`installation` 事件）实现实时废止。 |
-| **Git 并发写入冲突** | 多人或多作者同时提 PR 触发冲突。 | 1. 每次提交带最新 blob SHA；<br>2. 提 PR 失败自动重试；<br>3. 冲突时保留详细报错转管理员人工干预。 |
-| **XSS 与文本注入风险** | 作者在描述或镜像中注入恶意脚本。 | 全站禁止 `dangerouslySetInnerHTML`，所有输出一律按纯文本节点渲染。 |
+| GitHub App 私钥泄露 | 组织及数据仓库可能被未授权访问 | 1. 私钥仅通过环境变量注入运行环境，不进入代码仓库、镜像或日志；<br>2. App 写入权限严格限制在 `OneDragon-Anyone/plugin-data` 仓库。 |
+| 仓库授权变更同步延迟 | 用户在 GitHub 卸载 App 后，Portal 可能存在短时间缓存未同步 | 1. 执行写操作前实时调用 GitHub API 校验仓库授权；<br>2. 后续可通过 GitHub App Webhook（`installation` 事件）实现实时失效。 |
+| Git 并发写入冲突 | 多个并发修改可能导致 PR 合并冲突 | 1. 提交时携带目标文件最新的 blob SHA；<br>2. 提交失败时进行重试；<br>3. 若产生冲突，保留错误信息并通知管理员人工处理。 |
+| 脚本注入风险 | 作者在描述或镜像地址中注入恶意脚本 | 前端禁止使用 `dangerouslySetInnerHTML`，所有字段均作为纯文本渲染。 |
 
 ---
 
-## 8. 结论与下一步（判门 G1）
+## 8. 总结
 
-本设计以组织级 **GitHub App** 为认证基础，把身份与权限判定交给 GitHub 的仓库管理关系直接派生，因此不需要维护独立的账号体系与授权表。写入一律经 PR 落到 `plugin-data`，Git 历史是唯一可信审计源；合规变更自动合并，可疑变更转人工复核。范围覆盖管理后台与作者侧 Portal，后端采用 **Django + DRF** 承载 21 个 API 与审批流，前端采用**独立 Vite SPA + Semi Design**，公开站一行不改。
-
-设计文档已定稿提交，提请 Leader 审阅并进行 G1 判门。
+本方案使用组织级 GitHub App 处理认证，通过 GitHub 仓库的管理权限确定插件管理范围，无需维护独立的账号与权限表。所有数据修改均通过 PR 提交至 `plugin-data` 仓库，以 Git 历史作为审计记录；合规变更自动合并，高风险变更走双人复核。系统由 Django + DRF 后端（提供 21 个 API）与独立的前端 Vite SPA（Semi Design）构成，现有公开静态站点保持原样，不作修改。
