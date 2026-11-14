@@ -5,6 +5,7 @@
 
 import { github, orNull, LABELS, closeIssue as closeIssueRequest, commentIssue, ensureLabels as ensureRepoLabels, type GhRepo, GitHubError } from "./lib/github";
 import { readPolicy, ID_PATTERN, MAX_TAGS, TAG_PATTERN, formatEntry, pluginsDir } from "./lib/market";
+import { StepSummary } from "./lib/summary";
 import { checkLatestRelease } from "./lib/validator";
 import { loadHostPackages } from "./scan/host_packages";
 import { describeScan, findingLines, scanZip, type ScanCheck, type ScanReport } from "./scan/client";
@@ -62,6 +63,7 @@ async function handleSubmission(
   const workDir = await mkdtemp(join(tmpdir(), "zzzod-submission-"));
   try {
     const check = await checkSubmission(issue, policy, workDir);
+    await writeStepSummary(issue, check);
     if (check.errors.length > 0 || !check.entry || !check.preview) {
       await ctx.removeLabels(issue.number, ["pending"]);
       await ctx.addLabels(issue.number, ["rejected"]);
@@ -374,6 +376,46 @@ function scanSection(scan: ScanReport | null | undefined): string[] {
     ...(reviews.length > 0 ? ["**扫描：需要确认**", "", ...reviews.map((line) => `- ${line}`), ""] : []),
     `扫描覆盖：${describeScan(scan)}。`
   ];
+}
+
+/** 三类扫描在摘要里的名字，与 Python 侧的 category 对应 */
+const SCAN_CATEGORIES: [string, string][] = [
+  ["static", "static calls"],
+  ["dependency", "third-party deps"],
+  ["virus", "malware"]
+];
+
+/**
+ * 运行摘要：校验结论和三类扫描各命中多少，写进 Actions 的 Summary。
+ * issue 评论只在有命中时才提扫描，这条用来回答「到底扫过没有、扫出什么」
+ */
+async function writeStepSummary(issue: Issue, check: SubmissionCheck): Promise<void> {
+  const summary = new StepSummary(`#${issue.number} ${issue.title}`);
+  if (check.errors.length > 0 || !check.entry || !check.preview) {
+    summary.paragraph("**Check failed**").bullets(check.errors);
+  } else {
+    summary.paragraph("**Check passed**");
+  }
+
+  summary.section("Scan");
+  const scan = check.scan;
+  if (!scan) {
+    summary.bullets(["not run, see job log"]);
+  } else {
+    const counts = SCAN_CATEGORIES.map(([category, label]) => {
+      const count = (severity: "block" | "review") =>
+        scan.findings.filter((item) => item.category === category && item.severity === severity).length;
+      const parts = [
+        count("block") > 0 ? `${count("block")} to fix` : "",
+        count("review") > 0 ? `${count("review")} to review` : ""
+      ].filter(Boolean);
+      return `${label}: ${parts.length > 0 ? parts.join(", ") : "none"}`;
+    });
+    counts.push(`scope: ${scan.scannedFiles} files scanned (${scan.pythonFiles} Python)`);
+    summary.bullets(counts);
+  }
+
+  await summary.write();
 }
 
 /**

@@ -9,11 +9,12 @@ import { type GhRepo, github, githubText, listReleases, orNull, assetDigest, Git
 import { createBuildContext, lockDirectories, readLock, type BuiltPlugin, type LockPlugin, type BuildContext, type LockRelease } from "./lib/lock";
 import { checkEntries, readEntryFiles, readPolicy } from "./lib/market";
 import { parseMirrors, buildSources, githubAssetUrl, type MirrorRepo } from "./lib/mirror";
+import { StepSummary } from "./lib/summary";
 import { downloadAndValidate } from "./lib/validator";
 import { type MarketSourceEntry, type PluginCompatibility, type PluginEntry, type PluginWarning, type RiskTag, type PluginRelease, type WarningCode, type MarketIndex, type PluginStats, type SearchEntry, type MarketPolicy } from "@/lib/types";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { appendFile, mkdtemp, rm, copyFile, mkdir, writeFile, cp, readFile } from "node:fs/promises";
+import { mkdtemp, rm, copyFile, mkdir, writeFile, cp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, basename, dirname } from "node:path";
 import { promisify } from "node:util";
@@ -62,8 +63,8 @@ async function main(): Promise<void> {
   await writeJson(ctx.lockPath, ctx.lock);
 
   const summary = await renderSummary(ctx, sorted.length, entries.length);
-  console.log(summary);
-  if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, `${summary}\n`);
+  console.log(summary.text());
+  await summary.write();
 }
 
 // ---- 单个插件的收录与同步 ----
@@ -684,14 +685,12 @@ interface SourceVersion {
 }
 
 /** 结果在前 版本信息垫底 免得每次都要先划过三行不变的内容 */
-export async function renderSummary(ctx: BuildContext, published: number, total: number): Promise<string> {
-  const body = [`## Market build`, ``, `Published ${published} / ${total} plugins.`, ``, ...ctx.report];
+export async function renderSummary(ctx: BuildContext, published: number, total: number): Promise<StepSummary> {
+  const summary = new StepSummary("Market build").paragraph(`Published ${published} / ${total} plugins.`);
+  summary.raw(ctx.report);
   const sources = await sourceVersions(ctx);
-  if (sources.length > 0) {
-    if (body[body.length - 1] !== "") body.push("");
-    body.push(...sources);
-  }
-  return body.join("\n");
+  if (sources.length > 0) summary.section("Built from").bullets(sources);
+  return summary;
 }
 
 /** 一次构建由数据 / 市场 / 模板三份代码共同决定 摘要里按调用链顺序列全 */
@@ -710,10 +709,10 @@ async function sourceVersions(ctx: BuildContext): Promise<string[]> {
 
   for (const source of [data, market, template]) {
     const line = sourceLine(source);
-    if (line !== "") lines.push(`- ${line}`);
+    if (line !== "") lines.push(line);
   }
 
-  return lines.length === 0 ? [] : ["**Built from**", "", ...lines];
+  return lines;
 }
 
 /** 一行一项 形如 [`plugin-market@v1`](tag) ([`1f6da8b`](commit)) 点名和版本合成一个链接 */
