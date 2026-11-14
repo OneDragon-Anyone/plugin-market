@@ -18,6 +18,7 @@ env:
 
 jobs:
   bot:
+    name: market/submission-bot
     runs-on: ubuntu-latest
     steps:
       # 始终检出数据仓默认分支；pull_request_target 下也不运行 PR 中的代码

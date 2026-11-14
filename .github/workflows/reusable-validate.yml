@@ -106,4 +106,4 @@ jobs:
         run: |
           changed=$(git -C "$GITHUB_WORKSPACE" diff --name-only --diff-filter=AM "$BASE_SHA" HEAD -- 'market/plugins/*.json' \
             | xargs -r -n1 basename | sed 's/\.json$//' | paste -sd, -)
-          pnpm market:check --resolve --deep "$changed"
+          pnpm market:validate --resolve --deep "$changed"
