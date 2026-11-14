@@ -1,7 +1,7 @@
-# 技术设计：插件管理后台与开发者 Portal 架构（全面对齐 KernelSU Portal 模型）
+# 技术设计：插件管理后台与开发者 Portal 架构
 
 - **需求来源**: Issue [Z0D-3] / [Z0D-9]
-- **架构决策依据**: 人类最终决策（参考 [KernelSU Portal](https://developers.kernelsu.org/docs/zh-CN/portal) 模型；认证选用组织级 **GitHub App**；吸收 KSU 四大核心机制；写入严格走 PR 且以开放 Git 仓库为唯一基准；作者侧 Portal 纳入范围；后端采用 **Django + DRF**；前端采用独立目录 **Vite SPA + Semi Design**，公开站一行不改）
+- **架构决策依据**: 认证选用组织级 **GitHub App**；身份与权限由 GitHub 仓库管理关系直接派生；写入严格走 PR 且以公开 Git 仓库为唯一基准；作者侧 Portal 纳入范围；后端采用 **Django + DRF**；前端采用独立目录 **Vite SPA + Semi Design**，公开站一行不改
 - **设计负责人**: Architect
 - **状态**: 待评审（G1 阶段最终案）
 - **交付目标路径**: `docs/design/Z0D-3/design.md`
@@ -33,19 +33,19 @@
 └─────────────────┴──────────────────────────────────────────────────────┘
 ```
 
-### 1.2 人类最终决策演进：全面采用 KernelSU Portal 模型
+### 1.2 架构决策要点
 
-人类明确指出：**参考成熟的 [KernelSU Portal](https://developers.kernelsu.org/docs/zh-CN/portal) 架构模型进行技术设计与落地**。针对过往分歧做出一锤定音的定案：
+以下决策为本设计的技术基石，后续所有章节均以此为依据：
 
 1. **认证全面切换为 GitHub App（彻底放弃 OAuth App）**：
    - 纳入作者侧 Portal 后，作者需要维护名下仓库的镜像与标签，必须强验证「该仓库属于我」。
    - **GitHub App 的「安装到仓库」动作本身即是管理员证明**。无需在服务端编写繁琐易漏的仓库权限校验代码，作者授权范围精准限制在所选仓库，杜绝越权。
    - GitHub App 创建在现有组织 `OneDragon-Anyone`（Organization）下。
-2. **吸收 KernelSU Portal 的四大核心机制**：
+2. **身份与审核的四条基本机制**：
    - **安装即授权**：作者在 GitHub 将 App 安装到仓库后，Portal 自动识别并呈现该插件；组织仓库需组织 owner 批准；
    - **无独立账号系统**：谁是 GitHub 仓库管理员谁管该插件，GitHub 权限变更，Portal 动态对齐；
    - **审核只审规则**：聚焦垃圾信息、合规性、保留 ID 与防抢注，不做耗时的人工代码审计；确立「视情况自动审批」标准（合规自动合并，可疑转人工）；
-   - **状态机对齐**：KSU `pending / listed / rejected / suspended / archived` 与本系统现有 `listed / hidden / deprecated / suspended / removed` 无缝映射。
+   - **状态机覆盖完整生命周期**：从提交待审、在架、驳回，到暂停、废弃、彻底移除，每个状态都有明确的业务语义与构建表现。
 3. **写入模型：严格走 PR，以开放 Git 为唯一信任基准**：
    - 所有变更必须通过 GitHub PR 写入 `plugin-data`，严禁直接 Commit 到 master/main 分支；
    - Git 提交历史是不可篡改的唯一法定审计源，本地数据库流水仅作运营辅助，数据冲突以 Git 为准；
@@ -64,7 +64,7 @@
 
 ## 2. 非目标：明确不做的事
 
-1. **不做深度代码审查**：遵循 KSU 审核哲学，收录与变更只审元数据规范、ID 合规与安全扫描命中，不设重量级人工源码审计流水线。
+1. **不做深度代码审查**：收录与变更只审元数据规范、ID 合规与安全扫描命中，不设重量级人工源码审计流水线。理由是插件数量与提交频率远超人工审计容量，重审计会让整个流程不可持续。
 2. **不接管 Git 业务数据至 Django ORM**：`plugin-data` 中的插件 JSON 依然保存在 Git 仓库中。Django ORM 仅管理认证凭证、refresh token、审批流水与审计日志，绝不在数据库中对插件元数据另建主库。
 3. **不对公开静态站做任何破坏性侵入**：现有公开市场（Astro 纯静态、Fluent UI Win11 风格组件、Tailwind 样式、GitHub Pages 部署）保持 100% 独立，零改动。
 4. **作者端严禁越权修改核心元数据**：作者严禁自助修改 `status`（下架/恢复）、`pinned`（置顶）以及构建时锁定的 `releases`，严守安全底线。
@@ -95,7 +95,7 @@ flowchart TD
         DRF["Django REST Framework (21 个路由)"]
         AppAuth["GitHub App 认证模块 (User Token + Refresh Token 轮转)"]
         AppJWT["GitHub App 私钥签发 (JWT -> Installation Token)"]
-        StateEngine["KSU 对齐状态机与 Maker-Checker 审批引擎"]
+        StateEngine["插件状态机与 Maker-Checker 审批引擎"]
         GitWriter["GitHubWriter 服务 (提 PR + 视情况自动 Squash Merge)"]
         SQLiteDB[("SQLite 数据库 (db.sqlite3: 会话/审批流水/审计)")]
 
@@ -126,32 +126,32 @@ flowchart TD
 
 ---
 
-### 3.2 照抄 KernelSU 的四个核心机制落实
+### 3.2 身份与审核的四条基本机制
 
-#### 1. 安装即授权（Installation is authorization）
+#### 1. 安装即授权
 - **实现原理**：GitHub App 安装在现有组织 `OneDragon-Anyone` 下。作者在提交或管理插件前，需在 GitHub 上将该 App 安装至其插件源码仓库（选择 "Only select repositories"）。
 - **零权限判断代码**：
   - 后端调用 `GET /user/installations` 获取当前登录用户的全部安装实例；
   - 遍历调用 `GET /user/installations/{installation_id}/repositories` 获取其授予管理权的仓库列表；
   - 作者在 Portal 只能看到并编辑这些仓库对应的插件；若作者在 GitHub 上被移除管理员身份，安装列表中该仓库随之消失，Portal 权限即刻同步失效，**彻底无需在应用层编写易漏的权限判断逻辑**。
 
-#### 2. 无独立账号体系（No Standalone Accounts）
+#### 2. 无独立账号体系
 - 彻底摒弃传统账密与独立用户表。所有用户身份唯一基于 GitHub 账号（`github_id`, `login`）。
 - **管理员判定**：环境变量 `ADMIN_USERS="alice,bob"` 白名单判定管理员身份；白名单内成员进入完整管理后台（审核台、全局插件管理、下架、作者封禁、全局 Policy）；
 - **作者判定**：拥有至少一个已安装该 GitHub App 的仓库，登录后自动展示专属的「我的插件」Portal 视图。
 
-#### 3. 审核只审规则，视情况自动审批（Rule-based Audit & Auto-merge）
-- 遵循 KSU 理念，不实行耗费人力且不切实际的源码人工审计：
+#### 3. 审核只审规则，视情况自动审批
+- 不实行耗费人力且不可持续的源码人工审计，改为规则化校验 + 自动化扫描：
   - **规则校验项**：包体积不超过 `maxZipBytes`、封面合规、Manifest 必填字段、标签符合 `TAG_PATTERN` 且不超过 8 个、插件 ID 符合正则且不在 `reservedIds` 保留清单中、仓库未被封禁；
   - **三类安全扫描**：静态安全扫描（敏感 API 检测）、依赖分析与已知恶意模式匹配；
 - **视情况自动审批流**：
   - **自动过（Auto-Approve & Auto-Merge）**：规则校验 100% 通过且无扫描告警的作者自维护字段变更（`tags`, `mirror`, `extraRisk`），系统通过 `GitHubWriter` 自动创建分支、提交 JSON、提 PR 并立即自动 Squash Merge 入库；
   - **转人工（Escalate to Human）**：命中高危扫描、插件 ID 冲突/争议、涉及 `suspended` / `removed` 状态下架，或者涉及作者封禁与 Policy 全局修改，强制转入自建审批队列，走双人复核。
 
-#### 4. 状态机对齐与映射
-KernelSU 状态机与 `plugin-data` 现有状态天然对齐，映射关系如下：
+#### 4. 状态机与生命周期映射
+状态机覆盖插件从提交到退役的完整生命周期，与 `plugin-data` 现有字段取值对应如下：
 
-| KernelSU 状态 | `plugin-data` 状态 | 业务语义 | 构建与搜索表现 (`scripts/build.ts`) |
+| 生命周期阶段 | `plugin-data` 状态 | 业务语义 | 构建与搜索表现 (`scripts/build.ts`) |
 | :--- | :--- | :--- | :--- |
 | **`pending`** | *（中间态/Issue/PR）* | 待审核申请 | 仍在 Issue/PR 或 `pending_ops` 中，未写入正式目录 |
 | **`listed`** | **`listed`** | 正常在架 | 进入 `search-index.json`、`plugins.json`，搜索展示 |
@@ -396,7 +396,7 @@ class PendingOp(models.Model):
 
 ## 6. 验证方式：给 Tester 的验证计划
 
-### 6.1 KernelSU 模型与权限隔离验证
+### 6.1 身份模型与权限隔离验证
 1. **安装即授权验证**：
    - 作者账号将 GitHub App 安装到自己的仓库 A，未安装到仓库 B；
    - 登录 Portal，确认界面仅列出仓库 A 对应的插件，仓库 B 不可操作；
@@ -432,6 +432,6 @@ class PendingOp(models.Model):
 
 ## 8. 结论与下一步（判门 G1）
 
-本技术设计完全对齐 KernelSU Portal 成熟模型，完成了从 OAuth App 到组织级 **GitHub App** 的认证跃升，确立了「安装即授权、无独立账号、审核只审规则、状态机对齐」的四大核心机制，平滑纳入了作者侧 Portal，后端采用 **Django + DRF** 沉淀 21 个 API 与审批流，前端采用**独立 Vite SPA + Semi Design**，公开站一行不改。
+本设计以组织级 **GitHub App** 为认证基础，把身份与权限判定交给 GitHub 的仓库管理关系直接派生，因此不需要维护独立的账号体系与授权表。写入一律经 PR 落到 `plugin-data`，Git 历史是唯一可信审计源；合规变更自动合并，可疑变更转人工复核。范围覆盖管理后台与作者侧 Portal，后端采用 **Django + DRF** 承载 21 个 API 与审批流，前端采用**独立 Vite SPA + Semi Design**，公开站一行不改。
 
 设计文档已定稿提交，提请 Leader 审阅并进行 G1 判门。
