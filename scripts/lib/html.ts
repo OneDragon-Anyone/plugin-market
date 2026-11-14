@@ -1,3 +1,5 @@
+/** README 与 changelog 的 HTML 净化：只放行展示需要的标签，相对地址按插件仓库与提交补全。 */
+
 import sanitizeHtml from "sanitize-html";
 
 const ABSOLUTE_URL = /^[a-z][a-z0-9+.-]*:|^\/\//i;
@@ -7,6 +9,7 @@ function resolveRepoUrl(url: string, base: string): string {
   return new URL(url.replace(/^\/+/, ""), base).toString();
 }
 
+/** GitHub 渲染好的 HTML 直接进站点前过一遍：脚本、内联样式、站外跳转的裸链接都挡掉 */
 export function renderSafeHtml(html: string | undefined, repo: string, commit: string): string {
   if (!html) return "";
   const blobBase = `https://github.com/${repo}/blob/${commit}/`;

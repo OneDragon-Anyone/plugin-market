@@ -1,8 +1,12 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+/**
+ * 校验入口：合并前把关，判断 PR 写进数据仓的条目到底能不能用——字段和格式对不对、
+ * 仓库是否还存在、Release 里那个 `<id>.zip` 能否通过模板校验。
+ * 有一样不成立就让 market/validate 检查标红，挡住这次合并。
+ */
+
 import { type GhRepo, github, orNull } from "./lib/github";
 import { checkEntries, readEntryFiles, readPolicy } from "./lib/market";
+import { run, withTempDir } from "./lib/runtime";
 import { StepSummary } from "./lib/summary";
 import { checkLatestRelease } from "./lib/validator";
 
@@ -35,8 +39,7 @@ async function main(): Promise<void> {
   const deep: string[] = [];
 
   if (resolveRepos || deepIds.size > 0) {
-    const workDir = await mkdtemp(join(tmpdir(), "zzzod-check-"));
-    try {
+    await withTempDir("zzzod-validate-", async (workDir) => {
       for (const entry of entries) {
         if (entry.status === "removed") continue;
         const repo = await orNull(github<GhRepo>(`/repositories/${entry.repoId}`));
@@ -52,11 +55,8 @@ async function main(): Promise<void> {
           deep.push(`${entry.id}@${result.release.tag_name}`);
           console.log(`PASS ${entry.id} ${result.release.tag_name} sha256 ${result.check?.sha256 ?? "-"}`);
         }
-
       }
-    } finally {
-      await rm(workDir, { recursive: true, force: true });
-    }
+    });
   }
 
   for (const error of errors) console.log(`FAIL ${error}`);
@@ -65,7 +65,4 @@ async function main(): Promise<void> {
   if (errors.length > 0) process.exitCode = 1;
 }
 
-main().catch((error: unknown) => {
-  console.error(error);
-  process.exitCode = 2;
-});
+run(main, 2);

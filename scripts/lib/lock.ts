@@ -1,10 +1,9 @@
-/** 构建状态：路径、锁文件结构与一次构建的共享上下文。 */
+/** 构建状态：锁文件结构，以及一次构建共享的上下文。 */
 
-import { rootDir } from "./market";
+import { apiDir, lockCoversDir, lockPath, templateDir } from "./paths";
 import { type MarketPolicy, type PluginEntry, type PluginStats, type WarningCode } from "@/lib/types";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
 
 // ---- 共享状态与锁文件结构 ----
 
@@ -17,7 +16,6 @@ export interface BuildContext {
   report: string[];
   policy: MarketPolicy;
   lock: Lock;
-  lockDir: string;
   lockPath: string;
   lockCoversDir: string;
   apiDir: string;
@@ -28,35 +26,23 @@ export interface BuildContext {
   previousStatsCache: Record<string, PluginStats> | null;
 }
 
-export function lockDirectories(): { lockDir: string; lockPath: string; lockCoversDir: string } {
-  const lockDir = resolve(process.env.LOCK_DIR ?? join(rootDir, ".lock"));
-  return {
-    lockDir,
-    lockPath: join(lockDir, "sources.lock.json"),
-    lockCoversDir: join(lockDir, "covers")
-  };
-}
-
-export async function readLock(lockPath: string): Promise<Lock> {
+export async function readLock(): Promise<Lock> {
   return existsSync(lockPath) ? (JSON.parse(await readFile(lockPath, "utf-8")) as Lock) : {};
 }
 
 export function createBuildContext(policy: MarketPolicy, lock: Lock): BuildContext {
-  const { lockDir, lockPath, lockCoversDir } = lockDirectories();
   const previousApiBase = (process.env.PREVIOUS_API_URL ?? "").trim();
   return {
     now: new Date(),
     report: [],
     policy,
     lock,
-    lockDir,
     lockPath,
     lockCoversDir,
-    apiDir: join(rootDir, "public", "api", "v1"),
+    apiDir,
     /** 统一补上结尾斜杠 相对地址才能正确拼到上一版目录下 */
     previousApiUrl: previousApiBase === "" ? "" : `${previousApiBase.replace(/\/+$/, "")}/`,
-    /** 模板仓检出目录 与 validator 用的是同一个环境变量 */
-    templateDir: resolve(process.env.TEMPLATE_DIR ?? ".plugin-template"),
+    templateDir,
     /** 自动 issue 要写进去的仓库 空串表示这轮不发（本地跑默认不发） */
     issueTarget:
       process.env.MARKET_OPEN_ISSUES === "true" ? (process.env.GITHUB_REPOSITORY ?? "").trim() : "",

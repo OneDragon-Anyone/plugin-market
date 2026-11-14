@@ -5,7 +5,7 @@
 
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { lastJsonLine, runPython } from "../lib/validator";
+import { lastJsonLine, runPython } from "../lib/python";
 const scannerPath = resolve(dirname(fileURLToPath(import.meta.url)), "scan_plugin.py");
 
 export interface ScanFinding {

@@ -7,6 +7,7 @@
 
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { errorMessage } from "../lib/runtime";
 
 /** 主程序仓库与分支，插件跑在它的 Python 环境里 */
 const HOST_REPOSITORY = "OneDragon-Anything/ZenlessZoneZero-OneDragon";
@@ -111,9 +112,8 @@ export async function loadHostPackages(
     if (changed) await writeSnapshot(lockDir, modules);
     return modules;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
     const fallback = previous ? "沿用上一份清单" : "本轮不把主程序自带的包列入白名单";
-    log(`- ⚠️ 主程序依赖清单抓取失败，${fallback}：${message.slice(0, 160)}`);
+    log(`- ⚠️ 主程序依赖清单抓取失败，${fallback}：${errorMessage(error).slice(0, 160)}`);
     return previous?.modules ?? [];
   }
 }
