@@ -4,14 +4,16 @@
  */
 
 import { github, orNull, LABELS, closeIssue as closeIssueRequest, commentIssue, ensureLabels as ensureRepoLabels, type GhRepo, GitHubError } from "./lib/github";
-import { readPolicy, ID_PATTERN, MAX_TAGS, TAG_PATTERN, formatEntry, pluginsDir } from "./lib/market";
+import { readPolicy, ID_PATTERN, MAX_TAGS, TAG_PATTERN, formatEntry } from "./lib/market";
+import { pluginsDir } from "./lib/paths";
+import { errorMessage, run, withTempDir } from "./lib/runtime";
+import { StepSummary } from "./lib/summary";
 import { checkLatestRelease } from "./lib/validator";
 import { loadHostPackages } from "./scan/host_packages";
 import { describeScan, findingLines, scanZip, type ScanCheck, type ScanReport } from "./scan/client";
 import { type MarketPolicy, type MarketSourceEntry } from "@/lib/types";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 // ---- 入口：事件分发 ----
@@ -59,9 +61,9 @@ async function handleSubmission(
     return;
   }
 
-  const workDir = await mkdtemp(join(tmpdir(), "zzzod-submission-"));
-  try {
+  await withTempDir("zzzod-submission-", async (workDir) => {
     const check = await checkSubmission(issue, policy, workDir);
+    await writeStepSummary(issue, check);
     if (check.errors.length > 0 || !check.entry || !check.preview) {
       await ctx.removeLabels(issue.number, ["pending"]);
       await ctx.addLabels(issue.number, ["rejected"]);
@@ -79,9 +81,7 @@ async function handleSubmission(
     }
     await ctx.removeLabels(issue.number, ["rejected", "needs-review"]);
     await openPullRequest(ctx, issue, { ...check, entry: check.entry, preview: check.preview });
-  } finally {
-    await rm(workDir, { recursive: true, force: true });
-  }
+  });
 }
 
 export async function triggerBuild(ctx: BotContext, issue: Issue): Promise<void> {
@@ -284,11 +284,16 @@ function jsonEqual(a: unknown, b: unknown): boolean {
   return keysA.length === keysB.length && keysA.every((key) => jsonEqual(left[key], right[key]));
 }
 
+/** contents API 回的是 base64，解出来就是文件原文 */
+function decodeContent(file: { content: string }): unknown {
+  return JSON.parse(Buffer.from(file.content, "base64").toString("utf-8"));
+}
+
 async function readManifestFile(fullName: string, path: string, ref: string): Promise<Record<string, unknown>> {
   const file = await github<{ content: string }>(
     `/repos/${fullName}/contents/${path}?ref=${encodeURIComponent(ref)}`
   );
-  return JSON.parse(Buffer.from(file.content, "base64").toString("utf-8")) as Record<string, unknown>;
+  return decodeContent(file) as Record<string, unknown>;
 }
 
 async function findPackageManifest(
@@ -315,7 +320,7 @@ async function findPackageManifest(
     );
     if (!file) continue;
     try {
-      manifests.push({ dir: dir.name, data: JSON.parse(Buffer.from(file.content, "base64").toString("utf-8")) });
+      manifests.push({ dir: dir.name, data: decodeContent(file) as Record<string, unknown> });
     } catch {
       errors.push(`\`${dir.name}/plugin.json\` 不是合法 JSON。`);
     }
@@ -357,8 +362,7 @@ async function scanSubmission(workDir: string, zipPath: string, notes: string[])
   try {
     return await scanZip(zipPath, { checks, hostPackages, knownPlugins });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    notes.push(`安全扫描没跑起来（${message.slice(0, 160)}），合并前请自己看一下源码。`);
+    notes.push(`安全扫描没跑起来（${errorMessage(error).slice(0, 160)}），合并前请自己看一下源码。`);
     return null;
   }
 }
@@ -374,6 +378,46 @@ function scanSection(scan: ScanReport | null | undefined): string[] {
     ...(reviews.length > 0 ? ["**扫描：需要确认**", "", ...reviews.map((line) => `- ${line}`), ""] : []),
     `扫描覆盖：${describeScan(scan)}。`
   ];
+}
+
+/** 三类扫描在摘要里的名字，与 Python 侧的 category 对应 */
+const SCAN_CATEGORIES: [string, string][] = [
+  ["static", "static calls"],
+  ["dependency", "third-party deps"],
+  ["virus", "malware"]
+];
+
+/**
+ * 运行摘要：校验结论和三类扫描各命中多少，写进 Actions 的 Summary。
+ * issue 评论只在有命中时才提扫描，这条用来回答「到底扫过没有、扫出什么」
+ */
+async function writeStepSummary(issue: Issue, check: SubmissionCheck): Promise<void> {
+  const summary = new StepSummary(`#${issue.number} ${issue.title}`);
+  if (check.errors.length > 0 || !check.entry || !check.preview) {
+    summary.paragraph("**Check failed**").bullets(check.errors);
+  } else {
+    summary.paragraph("**Check passed**");
+  }
+
+  summary.section("Scan");
+  const scan = check.scan;
+  if (!scan) {
+    summary.bullets(["not run, see job log"]);
+  } else {
+    const counts = SCAN_CATEGORIES.map(([category, label]) => {
+      const count = (severity: "block" | "review") =>
+        scan.findings.filter((item) => item.category === category && item.severity === severity).length;
+      const parts = [
+        count("block") > 0 ? `${count("block")} to fix` : "",
+        count("review") > 0 ? `${count("review")} to review` : ""
+      ].filter(Boolean);
+      return `${label}: ${parts.length > 0 ? parts.join(", ") : "none"}`;
+    });
+    counts.push(`scope: ${scan.scannedFiles} files scanned (${scan.pythonFiles} Python)`);
+    summary.bullets(counts);
+  }
+
+  await summary.write();
 }
 
 /**
@@ -566,7 +610,4 @@ export async function openPullRequest(ctx: BotContext, issue: Issue, check: Read
 
 // ---- 启动 ----
 
-main().catch((error: unknown) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+run(main);

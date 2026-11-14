@@ -7,8 +7,8 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "market:build": "tsx scripts/build-market.ts",
-    "market:check": "tsx scripts/check-market.ts",
+    "market:build": "tsx scripts/build.ts",
+    "market:validate": "tsx scripts/validate.ts",
     "market:bot": "tsx scripts/submission-bot.ts",
     "check": "tsc --noEmit"
   },

@@ -6,15 +6,16 @@
 import { notifyRevoked } from "./issues/revoked";
 import { openStaleIssue } from "./issues/stale";
 import { type GhRepo, github, githubText, listReleases, orNull, assetDigest, GitHubError, type GhRelease, resolveTagCommit } from "./lib/github";
-import { createBuildContext, lockDirectories, readLock, type BuiltPlugin, type LockPlugin, type BuildContext, type LockRelease } from "./lib/lock";
+import { createBuildContext, readLock, type BuiltPlugin, type LockPlugin, type BuildContext, type LockRelease } from "./lib/lock";
 import { checkEntries, readEntryFiles, readPolicy } from "./lib/market";
 import { parseMirrors, buildSources, githubAssetUrl, type MirrorRepo } from "./lib/mirror";
+import { errorMessage, run, withTempDir } from "./lib/runtime";
+import { StepSummary } from "./lib/summary";
 import { downloadAndValidate } from "./lib/validator";
 import { type MarketSourceEntry, type PluginCompatibility, type PluginEntry, type PluginWarning, type RiskTag, type PluginRelease, type WarningCode, type MarketIndex, type PluginStats, type SearchEntry, type MarketPolicy } from "@/lib/types";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { appendFile, mkdtemp, rm, copyFile, mkdir, writeFile, cp, readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, copyFile, mkdir, writeFile, cp, readFile } from "node:fs/promises";
 import { join, basename, dirname } from "node:path";
 import { promisify } from "node:util";
 import { renderSafeHtml } from "./lib/html";
@@ -23,8 +24,7 @@ import { renderSafeHtml } from "./lib/html";
 
 async function main(): Promise<void> {
   const policy = await readPolicy();
-  const { lockPath } = lockDirectories();
-  const ctx = createBuildContext(policy, await readLock(lockPath));
+  const ctx = createBuildContext(policy, await readLock());
 
   // 配了索引镜像但凭证不全时 静默跳过会让人以为镜像在工作；主动关闭的不报
   if (
@@ -37,24 +37,21 @@ async function main(): Promise<void> {
   const { entries, errors } = checkEntries(await readEntryFiles(), policy);
   if (errors.length > 0) throw new Error(`market entries are invalid:\n${errors.join("\n")}`);
 
-  const workDir = await mkdtemp(join(tmpdir(), "zzzod-market-"));
-  const plugins: BuiltPlugin[] = [];
-  try {
+  const plugins = await withTempDir("zzzod-market-", async (workDir) => {
+    const built: BuiltPlugin[] = [];
     for (const entry of entries) {
       if (entry.status === "removed" || policy.bannedRepoIds.includes(entry.repoId)) continue;
       try {
         const plugin = await processPlugin(ctx, entry, workDir);
-        if (plugin) plugins.push(plugin);
+        if (plugin) built.push(plugin);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        ctx.report.push(`- ❌ \`${entry.id}\` sync failed: ${message}`);
+        ctx.report.push(`- ❌ \`${entry.id}\` sync failed: ${errorMessage(error)}`);
         const previous = await previousEntry(ctx, entry.id);
-        if (previous) plugins.push(await carryOver(ctx, previous, parseMirrors(entry.mirror)));
+        if (previous) built.push(await carryOver(ctx, previous, parseMirrors(entry.mirror)));
       }
     }
-  } finally {
-    await rm(workDir, { recursive: true, force: true });
-  }
+    return built;
+  });
 
   const sorted = sortPlugins(plugins);
   await writeApi(ctx, sorted);
@@ -62,8 +59,8 @@ async function main(): Promise<void> {
   await writeJson(ctx.lockPath, ctx.lock);
 
   const summary = await renderSummary(ctx, sorted.length, entries.length);
-  console.log(summary);
-  if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, `${summary}\n`);
+  console.log(summary.text());
+  await summary.write();
 }
 
 // ---- 单个插件的收录与同步 ----
@@ -121,8 +118,7 @@ export async function processPlugin(
       log: (line) => ctx.report.push(line)
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    ctx.report.push(`- ⚠️ \`${entry.id}\` 下架通知发送失败: ${message}`);
+    ctx.report.push(`- ⚠️ \`${entry.id}\` 下架通知发送失败: ${errorMessage(error)}`);
   }
   if (accepted.length === 0) {
     ctx.report.push(`- ⏸️ \`${entry.id}\` has no accepted release yet, not published`);
@@ -320,8 +316,7 @@ export async function acceptNewReleases(
       found = await github<GhRelease>(`/repos/${repo.full_name}/releases/tags/${tag}`);
     } catch (error) {
       if (!(error instanceof GitHubError && error.status === 404)) {
-        const message = error instanceof Error ? error.message : String(error);
-        ctx.report.push(`- ⚠️ \`${entry.id}\` ${tag} 是否还在无法确认（${message}），本轮跳过`);
+        ctx.report.push(`- ⚠️ \`${entry.id}\` ${tag} 是否还在无法确认（${errorMessage(error)}），本轮跳过`);
         continue;
       }
     }
@@ -522,34 +517,32 @@ export async function publishIndexFile(
 ): Promise<string> {
   const remote = `${siteUrlOf(target)}/${target.repo}`;
   const url = `${remote}/-/git/raw/${target.branch}/${INDEX_FILE}`;
-  const dir = await mkdtemp(join(tmpdir(), "cnb-index-"));
   const authRemote = remote.replace("://", `://cnb:${encodeURIComponent(target.token)}@`);
-  try {
-    await runGit("git", ["clone", "-q", "--depth", "1", "--branch", target.branch, authRemote, dir]);
-    await writeFile(join(dir, INDEX_FILE), data);
-    // 封面跟索引放同级，客户端按「索引目录 + cover」拼地址；每次只保留本次构建引用的封面
-    await rm(join(dir, "covers"), { recursive: true, force: true });
-    if (existsSync(coversDir)) await cp(coversDir, join(dir, "covers"), { recursive: true });
-    await runGit("git", ["add", "-A"], { cwd: dir });
-    const staged = await runGit("git", ["status", "--porcelain"], { cwd: dir });
-    if (staged.stdout.trim() === "") return url;
-    await runGit(
-      "git",
-      [
-        "-c", "user.name=plugin-market",
-        "-c", "user.email=plugin-market@users.noreply.github.com",
-        "commit", "-q", "-m", `chore: sync index and covers (build ${(process.env.GITHUB_SHA ?? "local").slice(0, 7)})`
-      ],
-      { cwd: dir }
-    );
-    await runGit("git", ["push", "-q", authRemote, `HEAD:refs/heads/${target.branch}`], { cwd: dir });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`索引推送失败：${redact(message, target.token)}`);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-  return url;
+  return await withTempDir("cnb-index-", async (dir) => {
+    try {
+      await runGit("git", ["clone", "-q", "--depth", "1", "--branch", target.branch, authRemote, dir]);
+      await writeFile(join(dir, INDEX_FILE), data);
+      // 封面跟索引放同级，客户端按「索引目录 + cover」拼地址；每次只保留本次构建引用的封面
+      await rm(join(dir, "covers"), { recursive: true, force: true });
+      if (existsSync(coversDir)) await cp(coversDir, join(dir, "covers"), { recursive: true });
+      await runGit("git", ["add", "-A"], { cwd: dir });
+      const staged = await runGit("git", ["status", "--porcelain"], { cwd: dir });
+      if (staged.stdout.trim() === "") return url;
+      await runGit(
+        "git",
+        [
+          "-c", "user.name=plugin-market",
+          "-c", "user.email=plugin-market@users.noreply.github.com",
+          "commit", "-q", "-m", `chore: sync index and covers (build ${(process.env.GITHUB_SHA ?? "local").slice(0, 7)})`
+        ],
+        { cwd: dir }
+      );
+      await runGit("git", ["push", "-q", authRemote, `HEAD:refs/heads/${target.branch}`], { cwd: dir });
+      return url;
+    } catch (error) {
+      throw new Error(`索引推送失败：${redact(errorMessage(error), target.token)}`);
+    }
+  });
 }
 
 /** 把 plugins.json 与封面同步到镜像仓，客户端才能按下载源切换索引。 */
@@ -565,8 +558,7 @@ export async function publishIndexMirror(ctx: BuildContext): Promise<void> {
     );
     ctx.report.push(`- ✅ index mirrored -> ${url}`);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    ctx.report.push(`- ⚠️ index mirror failed: ${message}`);
+    ctx.report.push(`- ⚠️ index mirror failed: ${errorMessage(error)}`);
   }
 }
 
@@ -589,8 +581,7 @@ export async function previousStats(ctx: BuildContext): Promise<Record<string, P
         ctx.report.push(`- ⚠️ 读不到上一版 stats.json（HTTP ${response.status}），本轮同步失败的插件统计会归零`);
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      ctx.report.push(`- ⚠️ 读取上一版 stats.json 失败（${message}），本轮同步失败的插件统计会归零`);
+      ctx.report.push(`- ⚠️ 读取上一版 stats.json 失败（${errorMessage(error)}），本轮同步失败的插件统计会归零`);
     }
   }
   ctx.previousStatsCache = loaded;
@@ -684,14 +675,12 @@ interface SourceVersion {
 }
 
 /** 结果在前 版本信息垫底 免得每次都要先划过三行不变的内容 */
-export async function renderSummary(ctx: BuildContext, published: number, total: number): Promise<string> {
-  const body = [`## Market build`, ``, `Published ${published} / ${total} plugins.`, ``, ...ctx.report];
+export async function renderSummary(ctx: BuildContext, published: number, total: number): Promise<StepSummary> {
+  const summary = new StepSummary("Market build").paragraph(`Published ${published} / ${total} plugins.`);
+  summary.raw(ctx.report);
   const sources = await sourceVersions(ctx);
-  if (sources.length > 0) {
-    if (body[body.length - 1] !== "") body.push("");
-    body.push(...sources);
-  }
-  return body.join("\n");
+  if (sources.length > 0) summary.section("Built from").bullets(sources);
+  return summary;
 }
 
 /** 一次构建由数据 / 市场 / 模板三份代码共同决定 摘要里按调用链顺序列全 */
@@ -710,10 +699,10 @@ async function sourceVersions(ctx: BuildContext): Promise<string[]> {
 
   for (const source of [data, market, template]) {
     const line = sourceLine(source);
-    if (line !== "") lines.push(`- ${line}`);
+    if (line !== "") lines.push(line);
   }
 
-  return lines.length === 0 ? [] : ["**Built from**", "", ...lines];
+  return lines;
 }
 
 /** 一行一项 形如 [`plugin-market@v1`](tag) ([`1f6da8b`](commit)) 点名和版本合成一个链接 */
@@ -781,7 +770,4 @@ async function templateCommit(ctx: BuildContext): Promise<string> {
 
 // ---- 启动 ----
 
-main().catch((error: unknown) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+run(main);

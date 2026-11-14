@@ -1,6 +1,4 @@
-/** GitHub REST 客户端与 issue / 标签写操作：token、错误类型、分页、标签表。 */
-
-
+/** GitHub REST 客户端、release 读取与 issue / 标签写操作：token、错误类型、数据类型、标签表。 */
 
 // ---- REST 客户端 ----
 
