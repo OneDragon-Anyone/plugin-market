@@ -4,9 +4,9 @@
 
 - 在线插件市场：<https://onedragon-anyone.github.io/plugin-data/>
 - 客户端：<https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon>
+- **市场仓**：<https://github.com/OneDragon-Anyone/plugin-market>（插件服务）
 - 模板仓：<https://github.com/OneDragon-Anyone/plugin-template>（插件参考）
 - 数据仓：<https://github.com/OneDragon-Anyone/plugin-data>（插件提交）
-- **市场仓**：<https://github.com/OneDragon-Anyone/plugin-market>（插件服务）
 
 ## 目录结构
 
@@ -28,7 +28,7 @@ pnpm install
 pnpm dev
 ```
 
-打开浏览器访问本地开发服务器即可预览插件市场界面。
+打开浏览器访问本地开发服务器即可预览插件市场界面。提交页的预检也在这套前端里跑：按作者仓库的默认分支读取 `plugin.json`，结果只用于提前发现问题和填好 Issue，不写进 Issue；是否收录由收录机器人在 Issue 提交后校验决定。
 
 ### 本地构建与代码检查
 
