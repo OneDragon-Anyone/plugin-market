@@ -17,11 +17,9 @@ import {
 } from "@fluentui/react-icons";
 import { issueUrl } from "@/lib/site";
 import { withBase } from "@/lib/utils";
-import { RISK_TAGS } from "@/lib/types";
+import { RISK_TAGS, ID_PATTERN, TAG_PATTERN, MAX_TAGS } from "@/lib/types";
 import { riskLabels } from "@/lib/risk";
 
-const ID_PATTERN = /^[a-z][a-z0-9_]*$/;
-const TAG_PATTERN = /^[a-z0-9][a-z0-9-]{0,23}$/;
 const REPO_PATTERN = /^https:\/\/github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?\/?$/;
 
 interface ManifestPreview {
@@ -67,7 +65,7 @@ export const SubmissionForm: React.FC = () => {
   );
 
   const tagError = useMemo(() => {
-    if (parsedTags.length > 8) return "标签最多 8 个";
+    if (parsedTags.length > MAX_TAGS) return `标签最多 ${MAX_TAGS} 个`;
     return parsedTags.some((t) => !TAG_PATTERN.test(t))
       ? "标签只能包含小写字母、数字和 -"
       : "";
