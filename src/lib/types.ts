@@ -13,6 +13,11 @@ export const RISK_TAGS = [
 
 export type RiskTag = (typeof RISK_TAGS)[number];
 
+/** 提交规则，站点预检与收录机器人共用一份 */
+export const ID_PATTERN = /^[a-z][a-z0-9_]*$/;
+export const TAG_PATTERN = /^[a-z0-9][a-z0-9-]{0,23}$/;
+export const MAX_TAGS = 8;
+
 export type WarningCode =
   | "version_not_increased"
   | "asset_changed"

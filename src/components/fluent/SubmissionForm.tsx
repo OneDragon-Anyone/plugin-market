@@ -17,11 +17,9 @@ import {
 } from "@fluentui/react-icons";
 import { issueUrl } from "@/lib/site";
 import { withBase } from "@/lib/utils";
-import { RISK_TAGS } from "@/lib/types";
+import { RISK_TAGS, ID_PATTERN, TAG_PATTERN, MAX_TAGS } from "@/lib/types";
 import { riskLabels } from "@/lib/risk";
 
-const ID_PATTERN = /^[a-z][a-z0-9_]*$/;
-const TAG_PATTERN = /^[a-z0-9][a-z0-9-]{0,23}$/;
 const REPO_PATTERN = /^https:\/\/github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?\/?$/;
 
 interface ManifestPreview {
@@ -67,7 +65,7 @@ export const SubmissionForm: React.FC = () => {
   );
 
   const tagError = useMemo(() => {
-    if (parsedTags.length > 8) return "标签最多 8 个";
+    if (parsedTags.length > MAX_TAGS) return `标签最多 ${MAX_TAGS} 个`;
     return parsedTags.some((t) => !TAG_PATTERN.test(t))
       ? "标签只能包含小写字母、数字和 -"
       : "";
@@ -81,8 +79,12 @@ export const SubmissionForm: React.FC = () => {
 
   async function fetchJson(url: string): Promise<unknown> {
     const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-    if (!res.ok) throw new Error(`${res.status}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${url}`);
     return res.json();
+  }
+
+  function errorText(e: unknown): string {
+    return e instanceof Error ? e.message : "未知错误";
   }
 
   async function handleCheck() {
@@ -104,12 +106,29 @@ export const SubmissionForm: React.FC = () => {
       }
       const [, owner, name] = match;
 
-      // 1. 获取仓库文件清单
-      let ref = "master";
+      // 1. 确认默认分支，再获取仓库文件清单
+      let ref = "";
+      try {
+        const repoData = (await fetchJson(
+          `https://api.github.com/repos/${owner}/${name}`
+        )) as { default_branch?: string; private?: boolean };
+        if (repoData.private) {
+          setErrors(["仓库不是公开仓库。"]);
+          setLoading(false);
+          return;
+        }
+        ref = typeof repoData.default_branch === "string" ? repoData.default_branch : "";
+      } catch {
+        // 拿不到默认分支时，后续请求不带 ref，由 GitHub 使用仓库默认分支
+        noteList.push("无法读取仓库默认分支，已按 GitHub 默认分支继续检测。");
+      }
+
+      const refQuery = ref ? `?ref=${encodeURIComponent(ref)}` : "";
+      const cdnRef = ref || "master";
       let files: string[] = [];
       try {
         const jsdelivr = (await fetchJson(
-          `https://data.jsdelivr.com/v1/packages/gh/${owner}/${name}@master?structure=flat`
+          `https://data.jsdelivr.com/v1/packages/gh/${owner}/${name}@${cdnRef}?structure=flat`
         )) as { files?: { name: string }[] };
         if (Array.isArray(jsdelivr.files)) {
           files = jsdelivr.files.map((f) => f.name.replace(/^\//, ""));
@@ -117,22 +136,13 @@ export const SubmissionForm: React.FC = () => {
       } catch {
         // jsDelivr 失败走 GitHub API
         try {
-          const repoData = (await fetchJson(
-            `https://api.github.com/repos/${owner}/${name}`
-          )) as { default_branch: string; private?: boolean };
-          if (repoData.private) {
-            setErrors(["仓库不是公开仓库。"]);
-            setLoading(false);
-            return;
-          }
-          ref = repoData.default_branch;
           const contents = (await fetchJson(
-            `https://api.github.com/repos/${owner}/${name}/contents/?ref=${ref}`
+            `https://api.github.com/repos/${owner}/${name}/contents/${refQuery}`
           )) as { name: string; type: string }[];
           files = contents.map((c) => (c.type === "dir" ? `${c.name}/` : c.name));
           noteList.push("已通过 GitHub API 获取仓库结构。");
         } catch (e) {
-          setErrors([`无法访问 GitHub 仓库 ${owner}/${name}。`]);
+          setErrors([`无法访问 GitHub 仓库 ${owner}/${name}：${errorText(e)}。`]);
           setLoading(false);
           return;
         }
@@ -157,14 +167,25 @@ export const SubmissionForm: React.FC = () => {
       let manifestRaw: Record<string, unknown> = {};
       try {
         const contentRes = (await fetchJson(
-          `https://api.github.com/repos/${owner}/${name}/contents/${manifestPath}?ref=${ref}`
-        )) as { content: string };
+          `https://api.github.com/repos/${owner}/${name}/contents/${manifestPath}${refQuery}`
+        )) as { content?: string };
+        if (typeof contentRes.content !== "string") {
+          throw new Error("响应中缺少 content 字段");
+        }
         const bytes = Uint8Array.from(atob(contentRes.content.replace(/\s/g, "")), (c) =>
           c.charCodeAt(0)
         );
-        manifestRaw = JSON.parse(new TextDecoder().decode(bytes));
+        const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new Error("顶层不是 JSON 对象");
+        }
+        manifestRaw = parsed as Record<string, unknown>;
       } catch (e) {
-        errList.push("无法解析 plugin.json 内容。");
+        // 读取失败时不做后续校验，避免用空 ID 连锁报出一堆误导信息
+        errList.push(
+          `无法读取 plugin.json（${manifestPath}${ref ? ` @${ref}` : ""}）：${errorText(e)}。后续校验已跳过。`
+        );
+        return;
       }
 
       // 校验元数据
@@ -203,10 +224,10 @@ export const SubmissionForm: React.FC = () => {
             size: asset.size
           });
         } else {
-          errList.push(`未找到包含 \`${id}.zip\` 附件的正式 Release。请确保已发布带有对应附件的 Release。`);
+          errList.push(`未找到包含 \`${id}.zip\` 附件的已发布 Release。请确保已发布带有对应附件的 Release。`);
         }
-      } catch {
-        noteList.push("获取 Release 状态超时，请确认仓库存在合规发布包。");
+      } catch (e) {
+        noteList.push(`获取 Release 状态失败（${errorText(e)}），请确认仓库存在合规发布包。`);
       }
     } catch (e) {
       errList.push("检测过程发生异常，请检查网络或仓库地址。");

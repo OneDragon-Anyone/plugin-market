@@ -2,15 +2,21 @@
 
 import { checkMirror } from "./mirror";
 import { pluginsDir, policyPath } from "./paths";
-import { RISK_TAGS, type MarketPolicy, type MarketSourceEntry } from "@/lib/types";
+import {
+  RISK_TAGS,
+  ID_PATTERN,
+  TAG_PATTERN,
+  MAX_TAGS,
+  type MarketPolicy,
+  type MarketSourceEntry
+} from "@/lib/types";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 // ---- 条目读取与校验 ----
 
-export const ID_PATTERN = /^[a-z][a-z0-9_]*$/;
-export const TAG_PATTERN = /^[a-z0-9][a-z0-9-]{0,23}$/;
-export const MAX_TAGS = 8;
+/** 规则常量来自 @/lib/types，这里保留原有导入路径给下游脚本 */
+export { ID_PATTERN, TAG_PATTERN, MAX_TAGS };
 const STATUSES = new Set(["listed", "hidden", "deprecated", "suspended", "removed"]);
 const ENTRY_KEYS = new Set(["id", "repo", "repoId", "tags", "extraRisk", "status", "pinned", "mirror", "review"]);
 const REVIEW_KEYS = new Set(["issue", "pr", "submittedBy"]);
