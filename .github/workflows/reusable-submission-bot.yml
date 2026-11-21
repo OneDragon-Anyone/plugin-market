@@ -1,4 +1,4 @@
-name: Reusable Submission Bot
+name: reusable-submission-bot
 
 on:
   workflow_call:
@@ -18,7 +18,8 @@ env:
 
 jobs:
   bot:
-    name: market/submission-bot
+    # 与文件名、脚本名的干名一致；页面标题是「调用方 job 名 / 这个名字」
+    name: submission-bot
     runs-on: ubuntu-latest
     steps:
       # 始终检出数据仓默认分支；pull_request_target 下也不运行 PR 中的代码

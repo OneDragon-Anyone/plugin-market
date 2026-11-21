@@ -1,4 +1,4 @@
-name: Reusable Validate Market
+name: reusable-build-market
 
 on:
   workflow_call:
@@ -12,19 +12,24 @@ on:
         description: 模板仓的 tag 或分支，不传时取该仓最新的版本 tag
         type: string
         required: false
+    secrets:
+      CNB_TOKEN:
+        description: CNB 访问令牌 提交索引与封面必需 未配置时跳过索引镜像
+        required: false
+
+env:
+  SITE_URL: ${{ vars.SITE_URL || format('https://{0}.github.io', github.repository_owner) }}
+  BASE_PATH: ${{ vars.SITE_BASE_PATH || '/plugin-data' }}
 
 jobs:
-  validate:
-    # 名称即数据仓 ruleset 中的必需检查；机器人 PR 由提交机器人写入同名 commit status
-    name: market/validate
+  build:
+    # 与文件名、脚本名的干名一致；页面标题是「调用方 job 名 / 这个名字」
+    name: build-market
     runs-on: ubuntu-latest
     steps:
-      # pull_request 事件下默认检出数据仓的 PR 合并提交
+      # 调用方即数据仓（plugin-data）：checkout 默认落在工作区根目录
       - name: Checkout data repository
         uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          persist-credentials: false
 
       - name: Checkout tools
         uses: actions/checkout@v6
@@ -34,6 +39,17 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: .tools
           persist-credentials: false
+
+      - name: Checkout lock branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin lock >/dev/null; then
+            git fetch --depth=1 origin lock:lock
+            git worktree add .lock lock
+          else
+            git worktree add --orphan -b lock .lock
+          fi
 
       - name: Resolve template ref
         id: template
@@ -88,22 +104,54 @@ jobs:
         working-directory: .tools
         run: pnpm install --frozen-lockfile
 
-      - name: Generate Astro types
-        working-directory: .tools
-        run: pnpm exec astro sync
-
-      - name: Type check
-        working-directory: .tools
-        run: pnpm check
-
-      - name: Validate market entries
+      - name: Build market data
         working-directory: .tools
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
           MARKET_DATA_DIR: ${{ github.workspace }}
+          MARKET_SHA: ${{ job.workflow_sha }}
+          MARKET_REF: ${{ job.workflow_ref }}
+          LOCK_DIR: ${{ github.workspace }}/.lock
           TEMPLATE_DIR: ${{ github.workspace }}/.plugin-template
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          TEMPLATE_REPOSITORY: ${{ inputs.template_repository }}
+          # 摘要里显示的模板版本就是这个 tag
+          TEMPLATE_REF: ${{ steps.template.outputs.ref }}
+          PREVIOUS_API_URL: ${{ env.SITE_URL }}${{ env.BASE_PATH }}/api/v1/
+          MARKET_OPEN_ISSUES: "true"
+        run: pnpm market:build
+
+      - name: Commit lock branch
+        working-directory: .lock
         run: |
-          changed=$(git -C "$GITHUB_WORKSPACE" diff --name-only --diff-filter=AM "$BASE_SHA" HEAD -- 'market/plugins/*.json' \
-            | xargs -r -n1 basename | sed 's/\.json$//' | paste -sd, -)
-          pnpm market:validate --resolve --deep "$changed"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "lock unchanged"
+            exit 0
+          fi
+          git commit -m "chore: update sources lock (${GITHUB_SHA::7})"
+          git push origin lock
+
+      - name: Build site
+        working-directory: .tools
+        run: pnpm build
+        env:
+          PUBLIC_GITHUB_OWNER: ${{ github.repository_owner }}
+          PUBLIC_GITHUB_REPO: ${{ github.event.repository.name }}
+          PUBLIC_BASE_PATH: ${{ env.BASE_PATH }}
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: .tools/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
