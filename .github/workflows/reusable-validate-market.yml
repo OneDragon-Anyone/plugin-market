@@ -15,8 +15,8 @@ on:
 
 jobs:
   validate:
-    # 名称即数据仓 ruleset 中的必需检查；机器人 PR 由提交机器人写入同名 commit status
-    name: market/validate
+    # 与文件名、脚本名的干名一致；页面标题是「调用方 job 名 / 这个名字」
+    name: validate-market
     runs-on: ubuntu-latest
     steps:
       # pull_request 事件下默认检出数据仓的 PR 合并提交

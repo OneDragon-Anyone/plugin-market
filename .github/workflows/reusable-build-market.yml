@@ -23,7 +23,8 @@ env:
 
 jobs:
   build:
-    name: market/build
+    # 与文件名、脚本名的干名一致；页面标题是「调用方 job 名 / 这个名字」
+    name: build-market
     runs-on: ubuntu-latest
     steps:
       # 调用方即数据仓（plugin-data）：checkout 默认落在工作区根目录
