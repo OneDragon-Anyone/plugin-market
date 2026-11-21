@@ -154,24 +154,13 @@ const RUN_LOG_URL = runLogUrl();
 const RUN_WORKFLOW = (process.env.GITHUB_WORKFLOW ?? "").trim();
 
 /**
- * 运行页标题的前半段：数据仓把 reusable 当 job 调用时给它起的名字。
- * 后半段是工作流自己的名字，两边同名是本仓的约定，所以拼起来就是页面上那一行。
- * 不查接口取，是因为 job 要排队等到机器才被创建，那之前没有这串字。
- */
-const CALLER_JOB = "market";
-
-/** 运行页标题，形如 `market / build-market` */
-export function runTitle(workflowName: string): string {
-  return workflowName ? `${CALLER_JOB} / ${workflowName}` : "";
-}
-
-/**
  * 指向运行页的链接片段：标题只作定位，summary 才是可点的那段
  * （运行页默认停在 Summary 页签）。
+ * 标题就是工作流自己的名字，运行记录里带着，不拼调用方的 job 名——
+ * 那个名字在别的仓里，我们看不到，也不该跟着它跑。
  */
 export function runLink(workflowName: string, url: string): string {
-  const title = runTitle(workflowName);
-  return title ? `${title} [summary](${url})` : `[summary](${url})`;
+  return workflowName ? `${workflowName} [summary](${url})` : `[summary](${url})`;
 }
 
 /** 正文末尾附上这一轮运行的 summary，读的人不用再去 Actions 里翻 */
