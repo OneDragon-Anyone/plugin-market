@@ -135,6 +135,63 @@ export async function downloadBytes(url: string, maxBytes: number): Promise<Buff
 // ---- 标签与 issue 写操作 ----
 
 /**
+ * 本次 Actions 运行的日志地址。
+ * issue 和评论都只在工作流里发，所以开 issue、发评论这两个出口统一补上链接，
+ * 谁调都漏不掉；不在工作流里跑时没有这些变量，就不带。
+ */
+function runLogUrl(): string {
+  const repo = (process.env.GITHUB_REPOSITORY ?? "").trim();
+  const runId = (process.env.GITHUB_RUN_ID ?? "").trim();
+  if (!repo || !runId) return "";
+  const server = (process.env.GITHUB_SERVER_URL ?? "https://github.com").replace(/\/+$/, "");
+  // 重跑过就是同一个 run 下的第 N 次尝试，不带上会打开第一次的日志
+  const attempt = (process.env.GITHUB_RUN_ATTEMPT ?? "").trim();
+  const base = `${server}/${repo}/actions/runs/${runId}`;
+  return attempt && attempt !== "1" ? `${base}/attempts/${attempt}` : base;
+}
+
+const RUN_LOG_URL = runLogUrl();
+const RUN_LOG_REPO = (process.env.GITHUB_REPOSITORY ?? "").trim();
+const RUN_LOG_ID = (process.env.GITHUB_RUN_ID ?? "").trim();
+
+/**
+ * 一次运行在 Actions 页面上的标题（`build / market/build`）。
+ * 这串是 GitHub 用调用方 job 和被调 job 的名字拼出来的，接口返回的就是页面上那个，
+ * 所以直接问接口拿，不在工作流里另写一份，改名也不用跟着改。
+ */
+export async function runTitle(repo: string, runId: string): Promise<string> {
+  if (!repo || !runId) return "";
+  try {
+    const data = await github<{ jobs: { name: string; status: string }[] }>(
+      `/repos/${repo}/actions/runs/${runId}/jobs`
+    );
+    // 一次运行可能有多个 job（build、deploy），当前跑着的那个才是这一轮
+    const current = data.jobs.find((job) => job.status === "in_progress") ?? data.jobs[0];
+    return current?.name ?? "";
+  } catch {
+    // 查不到就只留 summary，不拿别的东西凑标题
+    return "";
+  }
+}
+
+let currentTitle: Promise<string> | undefined;
+
+/**
+ * 指向运行页的链接片段，标题照抄页面上那一行。
+ * summary 是运行页默认停留的页签，所以它才是链接，前面的标题只作定位。
+ */
+export function summaryLink(title: string, url: string): string {
+  return title ? `${title} [summary](${url})` : `[summary](${url})`;
+}
+
+/** 正文末尾附上这一轮运行的 summary，读的人不用再去 Actions 里翻 */
+export async function withRunLog(body: string): Promise<string> {
+  if (!RUN_LOG_URL) return body;
+  currentTitle ??= runTitle(RUN_LOG_REPO, RUN_LOG_ID);
+  return `${body}\n\n${summaryLink(await currentTitle, RUN_LOG_URL)}`;
+}
+
+/**
  * 仓库用到的标签，一处定义。
  * 提交机器人靠它建标签、打标签，构建流程开自动 issue 时也用它，
  * 免得同一个标签两边各写一份，改了一处忘了另一处。
@@ -177,13 +234,16 @@ export interface IssueDraft {
 /** 开一条新 issue 返回编号 */
 export async function openIssue(repo: string, draft: IssueDraft): Promise<number> {
   if (draft.labels?.length) await ensureLabels(repo, draft.labels);
-  const issue = await github<{ number: number }>(`/repos/${repo}/issues`, { method: "POST", body: draft });
+  const issue = await github<{ number: number }>(`/repos/${repo}/issues`, {
+    method: "POST",
+    body: { ...draft, body: await withRunLog(draft.body) }
+  });
   return issue.number;
 }
 
 /** 往已有 issue 补一条评论 失败就抛出 */
 export async function commentIssue(repo: string, issue: number, body: string): Promise<void> {
-  await github(`/repos/${repo}/issues/${issue}/comments`, { method: "POST", body: { body } });
+  await github(`/repos/${repo}/issues/${issue}/comments`, { method: "POST", body: { body: await withRunLog(body) } });
 }
 
 /**

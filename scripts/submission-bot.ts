@@ -3,7 +3,7 @@
  * 运行契约、校验规则与事件分发都在这一个文件里。
  */
 
-import { github, orNull, LABELS, closeIssue as closeIssueRequest, commentIssue, ensureLabels as ensureRepoLabels, type GhRepo, GitHubError } from "./lib/github";
+import { github, orNull, LABELS, closeIssue as closeIssueRequest, commentIssue, ensureLabels as ensureRepoLabels, runTitle, summaryLink, withRunLog, type GhRepo, GitHubError } from "./lib/github";
 import { readPolicy, ID_PATTERN, MAX_TAGS, TAG_PATTERN, formatEntry } from "./lib/market";
 import { pluginsDir } from "./lib/paths";
 import { errorMessage, run, withTempDir } from "./lib/runtime";
@@ -84,22 +84,34 @@ async function handleSubmission(
   });
 }
 
+/** 构建工作流：派发、查运行、写链接都从这里取，改名只改一处 */
+const BUILD_WORKFLOW = { file: "build-market.yml" };
+
 export async function triggerBuild(ctx: BotContext, issue: Issue): Promise<void> {
-  await github(`/repos/${ctx.marketRepo}/actions/workflows/build-market.yml/dispatches`, {
+  await github(`/repos/${ctx.marketRepo}/actions/workflows/${BUILD_WORKFLOW.file}/dispatches`, {
     method: "POST",
     body: { ref: ctx.baseBranch }
   });
-  let runUrl = "";
+  let buildRun: { id: string; url: string } | null = null;
   try {
     await new Promise((resolve) => setTimeout(resolve, 2500));
-    const runs = await github<{ workflow_runs: { html_url: string }[] }>(
-      `/repos/${ctx.marketRepo}/actions/workflows/build-market.yml/runs?event=workflow_dispatch&per_page=1`
+    const runs = await github<{ workflow_runs: { id: number; html_url: string }[] }>(
+      `/repos/${ctx.marketRepo}/actions/workflows/${BUILD_WORKFLOW.file}/runs?event=workflow_dispatch&per_page=1`
     );
-    runUrl = runs.workflow_runs[0]?.html_url ?? "";
+    const latest = runs.workflow_runs[0];
+    if (latest) buildRun = { id: String(latest.id), url: latest.html_url };
   } catch {
     // 查询运行链接失败不影响触发结果
   }
-  await ctx.comment(issue.number, `已触发立即构建${runUrl ? `：${runUrl}` : ""}。站点与 API 会在几分钟后更新。`);
+  // 标题照抄运行页；刚排队的运行 job 还没建出来，隔两秒再看一两次
+  let title = buildRun ? await runTitle(ctx.marketRepo, buildRun.id) : "";
+  for (let round = 0; buildRun && !title && round < 2; round++) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    title = await runTitle(ctx.marketRepo, buildRun.id);
+  }
+  // 和页脚同一个写法，只是指向派发出去的那次构建
+  const buildLink = buildRun ? `：${summaryLink(title, buildRun.url)}` : "";
+  await ctx.comment(issue.number, `已触发立即构建${buildLink}。站点与 API 会在几分钟后更新。`);
 }
 
 export async function handleIssue(
@@ -580,7 +592,7 @@ export async function openPullRequest(ctx: BotContext, issue: Issue, check: Read
   ].join("\n");
   const pr = await github<{ number: number; html_url: string }>(`/repos/${ctx.marketRepo}/pulls`, {
     method: "POST",
-    body: { title: `feat: 收录 ${entry.id} 插件`, head: branch, base: ctx.baseBranch, body: prBody }
+    body: { title: `feat: 收录 ${entry.id} 插件`, head: branch, base: ctx.baseBranch, body: await withRunLog(prBody) }
   });
 
   entry.review.pr = pr.number;
