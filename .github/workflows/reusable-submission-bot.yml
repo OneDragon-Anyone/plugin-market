@@ -1,4 +1,4 @@
-name: Reusable Submission Bot
+name: reusable-submission-bot
 
 on:
   workflow_call:

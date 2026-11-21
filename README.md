@@ -12,9 +12,9 @@
 
 ```text
 .github/workflows/
-├── reusable-build.yml            # 索引构建工作流：自动抓取 Release 并生成静态 API 与网页
+├── reusable-build-market.yml     # 索引构建工作流：自动抓取 Release 并生成静态 API 与网页
 ├── reusable-submission-bot.yml   # 收录机器人：处理提交 Issue、校验包规范并自动提 PR
-└── reusable-validate.yml         # 规则校验检查
+└── reusable-validate-market.yml  # 规则校验检查
 scripts/                          # 构建、校验与机器人核心脚本 (TypeScript)
 src/                              # 插件市场前端页面 (Astro + React + Fluent UI)
 ```
