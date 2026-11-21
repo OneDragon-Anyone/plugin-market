@@ -10,8 +10,7 @@ import {
   closeIssue as closeIssueRequest,
   commentIssue,
   ensureLabels as ensureRepoLabels,
-  runTitle,
-  summaryLink,
+  runLink,
   withRunLog,
   type GhRepo,
   GitHubError
@@ -582,7 +581,7 @@ export async function openPullRequest(ctx: BotContext, issue: Issue, check: Read
   ].join("\n");
   const pr = await github<{ number: number; html_url: string }>(`/repos/${ctx.marketRepo}/pulls`, {
     method: "POST",
-    body: { title: `feat: 收录 ${entry.id} 插件`, head: branch, base: ctx.baseBranch, body: await withRunLog(prBody) }
+    body: { title: `feat: 收录 ${entry.id} 插件`, head: branch, base: ctx.baseBranch, body: withRunLog(prBody) }
   });
 
   entry.review.pr = pr.number;
@@ -612,15 +611,17 @@ export async function openPullRequest(ctx: BotContext, issue: Issue, check: Read
 
 // ---- 构建运行链接 ----
 
-/** 构建工作流：派发、查运行、写链接都从这里取，改名只改一处 */
+/** 构建工作流：派发、查运行都从这里取，改名只改一处 */
 const BUILD_WORKFLOW = "build-market.yml";
-/** 运行和 job 都是异步建出来的，轮询就按这个间隔 */
+/** 运行是异步建出来的，轮询就按这个间隔 */
 const POLL_INTERVAL_MS = 2000;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 interface BuildRun {
   id: string;
+  /** 工作流自己的名字，运行一创建就带着，不用等 job */
+  name: string;
   url: string;
 }
 
@@ -631,9 +632,9 @@ function buildApi(ctx: BotContext): string {
 
 async function latestBuildRun(query: string): Promise<BuildRun | null> {
   try {
-    const runs = await github<{ workflow_runs: { id: number; html_url: string }[] }>(query);
+    const runs = await github<{ workflow_runs: { id: number; name: string; html_url: string }[] }>(query);
     const latest = runs.workflow_runs[0];
-    return latest ? { id: String(latest.id), url: latest.html_url } : null;
+    return latest ? { id: String(latest.id), name: latest.name, url: latest.html_url } : null;
   } catch {
     // 查运行失败只是少一条链接，不影响主流程
     return null;
@@ -650,24 +651,13 @@ async function waitForBuildRun(query: string, skipId?: string): Promise<BuildRun
   return null;
 }
 
-/** 和页脚同一个写法：标题照抄运行页，取不到就只给链接 */
-async function buildRunLink(ctx: BotContext, run: BuildRun): Promise<string> {
-  let title = await runTitle(ctx.marketRepo, run.id);
-  // 刚排队的运行 job 还没建出来，隔两秒再看一两次
-  for (let round = 0; round < 2 && !title; round++) {
-    await sleep(POLL_INTERVAL_MS);
-    title = await runTitle(ctx.marketRepo, run.id);
-  }
-  return summaryLink(title, run.url);
-}
-
 export async function triggerBuild(ctx: BotContext, issue: Issue): Promise<void> {
   const runs = `${buildApi(ctx)}/runs?event=workflow_dispatch&per_page=1`;
   // 派发前先记下当前最新的一轮，之后只认领 id 变了的，免得把上一次 /sync 当成这一轮
   const previous = await latestBuildRun(runs);
   await github(`${buildApi(ctx)}/dispatches`, { method: "POST", body: { ref: ctx.baseBranch } });
   const run = await waitForBuildRun(runs, previous?.id);
-  const link = run ? `：${await buildRunLink(ctx, run)}` : "";
+  const link = run ? `：${runLink(run.name, run.url)}` : "";
   await ctx.comment(issue.number, `已触发立即构建${link}。站点与 API 会在几分钟后更新。`);
 }
 
@@ -689,7 +679,7 @@ function mergedBuildQuery(ctx: BotContext, pr: PullRequest): string {
 async function mergedBuildLink(ctx: BotContext, pr: PullRequest): Promise<string> {
   const query = mergedBuildQuery(ctx, pr);
   const run = query ? await waitForBuildRun(query) : null;
-  return run ? await buildRunLink(ctx, run) : "";
+  return run ? runLink(run.name, run.url) : "";
 }
 
 // ---- 启动 ----
