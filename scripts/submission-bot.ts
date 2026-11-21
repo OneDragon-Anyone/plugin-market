@@ -3,7 +3,19 @@
  * 运行契约、校验规则与事件分发都在这一个文件里。
  */
 
-import { github, orNull, LABELS, closeIssue as closeIssueRequest, commentIssue, ensureLabels as ensureRepoLabels, runTitle, summaryLink, withRunLog, type GhRepo, GitHubError } from "./lib/github";
+import {
+  github,
+  orNull,
+  LABELS,
+  closeIssue as closeIssueRequest,
+  commentIssue,
+  ensureLabels as ensureRepoLabels,
+  runTitle,
+  summaryLink,
+  withRunLog,
+  type GhRepo,
+  GitHubError
+} from "./lib/github";
 import { readPolicy, ID_PATTERN, MAX_TAGS, TAG_PATTERN, formatEntry } from "./lib/market";
 import { pluginsDir } from "./lib/paths";
 import { errorMessage, run, withTempDir } from "./lib/runtime";
@@ -84,76 +96,6 @@ async function handleSubmission(
   });
 }
 
-/** 构建工作流：派发、查运行、写链接都从这里取，改名只改一处 */
-const BUILD_WORKFLOW = "build-market.yml";
-
-interface BuildRun {
-  id: string;
-  url: string;
-}
-
-async function latestBuildRun(query: string): Promise<BuildRun | null> {
-  try {
-    const runs = await github<{ workflow_runs: { id: number; html_url: string }[] }>(query);
-    const latest = runs.workflow_runs[0];
-    return latest ? { id: String(latest.id), url: latest.html_url } : null;
-  } catch {
-    // 查运行失败只是少一条链接，不影响主流程
-    return null;
-  }
-}
-
-/** 运行是异步建出来的：派发或合并之后马上查多半还是上一轮，隔两秒再看几轮 */
-async function waitForBuildRun(query: string, isNew: (run: BuildRun) => boolean): Promise<BuildRun | null> {
-  for (let round = 0; round < 4; round++) {
-    if (round > 0) await new Promise((resolve) => setTimeout(resolve, 2000));
-    const run = await latestBuildRun(query);
-    if (run && isNew(run)) return run;
-  }
-  return null;
-}
-
-/** 和页脚同一个写法：标题照抄运行页，取不到就只给链接 */
-async function buildSummary(ctx: BotContext, run: BuildRun): Promise<string> {
-  let title = await runTitle(ctx.marketRepo, run.id);
-  // 刚排队的运行 job 还没建出来，隔两秒再看一两次
-  for (let round = 0; round < 2 && !title; round++) {
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    title = await runTitle(ctx.marketRepo, run.id);
-  }
-  return summaryLink(title, run.url);
-}
-
-export async function triggerBuild(ctx: BotContext, issue: Issue): Promise<void> {
-  const query = `/repos/${ctx.marketRepo}/actions/workflows/${BUILD_WORKFLOW}/runs?event=workflow_dispatch&per_page=1`;
-  // 派发前先记下当前最新的一次，之后只认领 id 变了的，免得把上一轮 /sync 当成这一轮
-  const previous = await latestBuildRun(query);
-  await github(`/repos/${ctx.marketRepo}/actions/workflows/${BUILD_WORKFLOW}/dispatches`, {
-    method: "POST",
-    body: { ref: ctx.baseBranch }
-  });
-  const run = await waitForBuildRun(query, (candidate) => candidate.id !== previous?.id);
-  const link = run ? `：${await buildSummary(ctx, run)}` : "";
-  await ctx.comment(issue.number, `已触发立即构建${link}。站点与 API 会在几分钟后更新。`);
-}
-
-/**
- * 合并会往 base 分支推一次，构建跟着起来，于是这里同样有两次运行。
- * 这次构建不是谁派发的，只能按合并提交去认领；认不到就不带，不让整条评论失败。
- */
-async function mergedBuildLink(ctx: BotContext, pr: PullRequest): Promise<string> {
-  const runs = `/repos/${ctx.marketRepo}/actions/workflows/${BUILD_WORKFLOW}/runs`;
-  // 同一个提交上可能还有手动派发的构建，只认 push 的那次
-  const query = pr.merge_commit_sha
-    ? `${runs}?event=push&head_sha=${pr.merge_commit_sha}&per_page=1`
-    : // rebase 合并没有合并提交，退到这次合并之后起来的 push 构建；没时间戳就宁可不带
-      pr.merged_at
-      ? `${runs}?event=push&branch=${ctx.baseBranch}&created=${encodeURIComponent(`>=${pr.merged_at}`)}&per_page=1`
-      : "";
-  const run = query ? await waitForBuildRun(query, () => true) : null;
-  return run ? await buildSummary(ctx, run) : "";
-}
-
 export async function handleIssue(
   ctx: BotContext,
   issue: Issue,
@@ -213,9 +155,8 @@ export async function handleClosedPullRequest(ctx: BotContext, pr: PullRequest):
       await ctx.closeIssue(issue, "not_planned");
     }
   }
-  await orNull(github(`/repos/${ctx.marketRepo}/git/refs/heads/${pr.head.ref}`, { method: "DELETE" })).catch(
-    () => null
-  );
+  // 分支删不掉不影响结论，403 / 404 都当无事发生
+  await github(`/repos/${ctx.marketRepo}/git/refs/heads/${pr.head.ref}`, { method: "DELETE" }).catch(() => null);
 }
 
 async function main(): Promise<void> {
@@ -667,6 +608,88 @@ export async function openPullRequest(ctx: BotContext, issue: Issue, check: Read
       ...(scanLines.length > 0 ? ["", ...scanLines] : [])
     ].join("\n")
   );
+}
+
+// ---- 构建运行链接 ----
+
+/** 构建工作流：派发、查运行、写链接都从这里取，改名只改一处 */
+const BUILD_WORKFLOW = "build-market.yml";
+/** 运行和 job 都是异步建出来的，轮询就按这个间隔 */
+const POLL_INTERVAL_MS = 2000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+interface BuildRun {
+  id: string;
+  url: string;
+}
+
+/** 构建工作流的 API 前缀，派发和查运行都从这里长出来 */
+function buildApi(ctx: BotContext): string {
+  return `/repos/${ctx.marketRepo}/actions/workflows/${BUILD_WORKFLOW}`;
+}
+
+async function latestBuildRun(query: string): Promise<BuildRun | null> {
+  try {
+    const runs = await github<{ workflow_runs: { id: number; html_url: string }[] }>(query);
+    const latest = runs.workflow_runs[0];
+    return latest ? { id: String(latest.id), url: latest.html_url } : null;
+  } catch {
+    // 查运行失败只是少一条链接，不影响主流程
+    return null;
+  }
+}
+
+/** 轮询到运行出现；skipId 用来跳过派发之前就在的那一轮 */
+async function waitForBuildRun(query: string, skipId?: string): Promise<BuildRun | null> {
+  for (let round = 0; round < 4; round++) {
+    if (round > 0) await sleep(POLL_INTERVAL_MS);
+    const run = await latestBuildRun(query);
+    if (run && run.id !== skipId) return run;
+  }
+  return null;
+}
+
+/** 和页脚同一个写法：标题照抄运行页，取不到就只给链接 */
+async function buildRunLink(ctx: BotContext, run: BuildRun): Promise<string> {
+  let title = await runTitle(ctx.marketRepo, run.id);
+  // 刚排队的运行 job 还没建出来，隔两秒再看一两次
+  for (let round = 0; round < 2 && !title; round++) {
+    await sleep(POLL_INTERVAL_MS);
+    title = await runTitle(ctx.marketRepo, run.id);
+  }
+  return summaryLink(title, run.url);
+}
+
+export async function triggerBuild(ctx: BotContext, issue: Issue): Promise<void> {
+  const runs = `${buildApi(ctx)}/runs?event=workflow_dispatch&per_page=1`;
+  // 派发前先记下当前最新的一轮，之后只认领 id 变了的，免得把上一次 /sync 当成这一轮
+  const previous = await latestBuildRun(runs);
+  await github(`${buildApi(ctx)}/dispatches`, { method: "POST", body: { ref: ctx.baseBranch } });
+  const run = await waitForBuildRun(runs, previous?.id);
+  const link = run ? `：${await buildRunLink(ctx, run)}` : "";
+  await ctx.comment(issue.number, `已触发立即构建${link}。站点与 API 会在几分钟后更新。`);
+}
+
+/** 合并起的那次构建怎么找：认合并提交，认不到就按时间兜 */
+function mergedBuildQuery(ctx: BotContext, pr: PullRequest): string {
+  const runs = `${buildApi(ctx)}/runs`;
+  // 同一个提交上可能还有手动派发的构建，只认 push 的那次
+  if (pr.merge_commit_sha) return `${runs}?event=push&head_sha=${pr.merge_commit_sha}&per_page=1`;
+  // rebase 合并没有合并提交，退到这次合并之后起来的 push 构建；连时间都没有就宁可不带
+  if (!pr.merged_at) return "";
+  const created = encodeURIComponent(`>=${pr.merged_at}`);
+  return `${runs}?event=push&branch=${ctx.baseBranch}&created=${created}&per_page=1`;
+}
+
+/**
+ * 合并会往 base 分支推一次，构建跟着起来，于是这里同样有两次运行。
+ * 这次构建不是谁派发的，只能按合并提交去认领；认不到就不带，不让整条评论失败。
+ */
+async function mergedBuildLink(ctx: BotContext, pr: PullRequest): Promise<string> {
+  const query = mergedBuildQuery(ctx, pr);
+  const run = query ? await waitForBuildRun(query) : null;
+  return run ? await buildRunLink(ctx, run) : "";
 }
 
 // ---- 启动 ----
