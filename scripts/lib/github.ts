@@ -151,44 +151,22 @@ function runLogUrl(): string {
 }
 
 const RUN_LOG_URL = runLogUrl();
-const RUN_LOG_REPO = (process.env.GITHUB_REPOSITORY ?? "").trim();
-const RUN_LOG_ID = (process.env.GITHUB_RUN_ID ?? "").trim();
+const RUN_WORKFLOW = (process.env.GITHUB_WORKFLOW ?? "").trim();
 
 /**
- * 一次运行在 Actions 页面上的标题（`build / market/build`）。
- * 这串是 GitHub 用调用方 job 和被调 job 的名字拼出来的，接口返回的就是页面上那个，
- * 所以直接问接口拿，不在工作流里另写一份，改名也不用跟着改。
+ * 指向运行页的链接片段：标题只作定位，summary 才是可点的那段
+ * （运行页默认停在 Summary 页签）。
+ * 标题就是工作流自己的名字，运行记录里带着，不拼调用方的 job 名——
+ * 那个名字在别的仓里，我们看不到，也不该跟着它跑。
  */
-export async function runTitle(repo: string, runId: string): Promise<string> {
-  if (!repo || !runId) return "";
-  try {
-    const data = await github<{ jobs: { name: string; status: string }[] }>(
-      `/repos/${repo}/actions/runs/${runId}/jobs`
-    );
-    // 一次运行可能有多个 job（build、deploy），当前跑着的那个才是这一轮
-    const current = data.jobs.find((job) => job.status === "in_progress") ?? data.jobs[0];
-    return current?.name ?? "";
-  } catch {
-    // 查不到就只留 summary，不拿别的东西凑标题
-    return "";
-  }
-}
-
-let currentTitle: Promise<string> | undefined;
-
-/**
- * 指向运行页的链接片段，标题照抄页面上那一行。
- * summary 是运行页默认停留的页签，所以它才是链接，前面的标题只作定位。
- */
-export function summaryLink(title: string, url: string): string {
-  return title ? `${title} [summary](${url})` : `[summary](${url})`;
+export function runLink(workflowName: string, url: string): string {
+  return workflowName ? `${workflowName} [summary](${url})` : `[summary](${url})`;
 }
 
 /** 正文末尾附上这一轮运行的 summary，读的人不用再去 Actions 里翻 */
-export async function withRunLog(body: string): Promise<string> {
+export function withRunLog(body: string): string {
   if (!RUN_LOG_URL) return body;
-  currentTitle ??= runTitle(RUN_LOG_REPO, RUN_LOG_ID);
-  return `${body}\n\n${summaryLink(await currentTitle, RUN_LOG_URL)}`;
+  return `${body}\n\n${runLink(RUN_WORKFLOW, RUN_LOG_URL)}`;
 }
 
 /**
@@ -236,14 +214,14 @@ export async function openIssue(repo: string, draft: IssueDraft): Promise<number
   if (draft.labels?.length) await ensureLabels(repo, draft.labels);
   const issue = await github<{ number: number }>(`/repos/${repo}/issues`, {
     method: "POST",
-    body: { ...draft, body: await withRunLog(draft.body) }
+    body: { ...draft, body: withRunLog(draft.body) }
   });
   return issue.number;
 }
 
 /** 往已有 issue 补一条评论 失败就抛出 */
 export async function commentIssue(repo: string, issue: number, body: string): Promise<void> {
-  await github(`/repos/${repo}/issues/${issue}/comments`, { method: "POST", body: { body: await withRunLog(body) } });
+  await github(`/repos/${repo}/issues/${issue}/comments`, { method: "POST", body: { body: withRunLog(body) } });
 }
 
 /**
