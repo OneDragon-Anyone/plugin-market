@@ -15,6 +15,7 @@ import {
   type GhRepo,
   GitHubError
 } from "./lib/github";
+import { formatSize } from "./lib/format";
 import { readPolicy, ID_PATTERN, MAX_TAGS, TAG_PATTERN, formatEntry } from "./lib/market";
 import { pluginsDir } from "./lib/paths";
 import { errorMessage, run, withTempDir } from "./lib/runtime";
@@ -503,7 +504,7 @@ export async function checkSubmission(
     `| 仓库 | [${repo.full_name}](${repo.html_url})（repoId ${repo.id}） |`,
     `| 版本 | \`${release.release.tag_name}\`（versionCode ${String(zipManifest.versionCode)}${release.release.prerelease ? "，beta" : ""}） |`,
     `| 风险标签 | ${((zipManifest.risk as string[]) ?? []).map((risk) => `\`${risk}\``).join(" ") || "无"} |`,
-    `| 附件 | \`${id}.zip\` ${release.check.size} bytes |`,
+    `| 附件 | \`${id}.zip\` ${formatSize(release.check.size)} |`,
     `| sha256 | \`${release.check.sha256}\` |`,
     `| 不可变 Release | ${release.release.immutable ? "是" : "否"} |`,
     `| 标签 | ${tags.join(", ") || "无"} |`
