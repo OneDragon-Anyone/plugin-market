@@ -1,5 +1,6 @@
 /** 插件包校验：下载 `<id>.zip`，起模板仓的 validate_plugin.py 过一遍。 */
 
+import { formatSize } from "./format";
 import { downloadBytes, type GhRelease, listReleases } from "./github";
 import { templateDir } from "./paths";
 import { lastJsonLine, runPython } from "./python";
@@ -80,7 +81,7 @@ export async function checkLatestRelease(
   }
   const asset = release.assets.find((item) => item.name === assetName)!;
   if (asset.size > policy.maxZipBytes) {
-    return { errors: [`\`${assetName}\` 大小 ${asset.size} 超过上限 ${policy.maxZipBytes}。`], release };
+    return { errors: [`\`${assetName}\` 大小 ${formatSize(asset.size)} 超过上限 ${formatSize(policy.maxZipBytes)}。`], release };
   }
   const zipPath = join(workDir, `${id}-${release.tag_name}.zip`);
   const check = await downloadAndValidate(asset.browser_download_url, zipPath, {

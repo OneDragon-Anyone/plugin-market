@@ -5,6 +5,7 @@
 
 import { notifyRevoked } from "./issues/revoked";
 import { openStaleIssue } from "./issues/stale";
+import { formatSize } from "./lib/format";
 import { type GhRepo, github, githubText, listReleases, orNull, assetDigest, GitHubError, type GhRelease, resolveTagCommit } from "./lib/github";
 import { createBuildContext, readLock, type BuiltPlugin, type LockPlugin, type BuildContext, type LockRelease } from "./lib/lock";
 import { checkEntries, readEntryFiles, readPolicy } from "./lib/market";
@@ -258,7 +259,7 @@ export async function acceptNewReleases(
     };
 
     if (asset.size > ctx.policy.maxZipBytes) {
-      reject("invalid_package", `${assetName} 大小 ${asset.size} 超过上限 ${ctx.policy.maxZipBytes}`);
+      reject("invalid_package", `${assetName} 大小 ${formatSize(asset.size)} 超过上限 ${formatSize(ctx.policy.maxZipBytes)}`);
       continue;
     }
 
