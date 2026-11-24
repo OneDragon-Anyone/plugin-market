@@ -3,8 +3,6 @@
 自动审核插件提交、定时构建索引、渲染市场网页，并把索引与封面另发一份到 CNB。
 
 - 在线插件市场：<https://onedragon-anyone.github.io/plugin-data/>
-- 客户端：<https://github.com/OneDragon-Anything/ZenlessZoneZero-OneDragon>
-- **市场仓**：<https://github.com/OneDragon-Anyone/plugin-market>（插件服务）
 - 模板仓：<https://github.com/OneDragon-Anyone/plugin-template>（插件参考）
 - 数据仓：<https://github.com/OneDragon-Anyone/plugin-data>（插件提交）
 
