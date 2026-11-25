@@ -3,13 +3,12 @@ name: reusable-submission-bot
 on:
   workflow_call:
     inputs:
-      template_repository:
-        description: 模板仓的仓库坐标，不传时用 OneDragon-Anyone/plugin-template
+      tools_repository:
+        description: 工具仓的仓库坐标，由调用方指定
         type: string
-        required: false
-        default: OneDragon-Anyone/plugin-template
-      template_ref:
-        description: 模板仓的 tag 或分支，不传时取该仓最新的版本 tag
+        required: true
+      tools_ref:
+        description: 工具仓的 tag 或分支，不传时取该仓最新的版本 tag
         type: string
         required: false
 
@@ -38,15 +37,19 @@ jobs:
           path: .tools
           persist-credentials: false
 
-      - name: Resolve template ref
-        id: template
+      - name: Resolve tools ref
+        id: tools
         env:
-          REPO: ${{ inputs.template_repository }}
-          REF: ${{ inputs.template_ref }}
+          REPO: ${{ inputs.tools_repository }}
+          REF: ${{ inputs.tools_ref }}
         run: |
           # 仓库变量粘贴时容易带上换行 先清掉再拼地址
           REPO=$(printf '%s' "$REPO" | tr -d '[:space:]')
           REF=$(printf '%s' "$REF" | tr -d '[:space:]')
+          if [ -z "$REPO" ]; then
+            echo "::error::调用方没有指定工具仓坐标"
+            exit 1
+          fi
           if [ -n "$REF" ]; then
             echo "ref=$REF" >> "$GITHUB_OUTPUT"
             exit 0
@@ -66,12 +69,12 @@ jobs:
           fi
           echo "ref=$latest" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout template tools
+      - name: Checkout plugin-tools
         uses: actions/checkout@v6
         with:
-          repository: ${{ inputs.template_repository }}
-          ref: ${{ steps.template.outputs.ref }}
-          path: .plugin-template
+          repository: ${{ inputs.tools_repository }}
+          ref: ${{ steps.tools.outputs.ref }}
+          path: .plugin-tools
           persist-credentials: false
 
       - uses: actions/setup-python@v6
@@ -96,7 +99,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           MARKET_DATA_DIR: ${{ github.workspace }}
-          TEMPLATE_DIR: ${{ github.workspace }}/.plugin-template
+          TOOLS_DIR: ${{ github.workspace }}/.plugin-tools
           MARKET_BASE_BRANCH: ${{ github.event.repository.default_branch }}
           MARKET_SITE_URL: ${{ vars.SITE_URL || format('https://{0}.github.io', github.repository_owner) }}${{ env.BASE_PATH }}/
         run: pnpm market:bot

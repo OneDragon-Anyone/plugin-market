@@ -1,8 +1,8 @@
-/** 插件包校验：下载 `<id>.zip`，起模板仓的 validate_plugin.py 过一遍。 */
+/** 插件包校验：下载 `<id>.zip`，起工具仓的 validate_plugin.py 过一遍。 */
 
 import { formatSize } from "./format";
 import { downloadBytes, type GhRelease, listReleases } from "./github";
-import { templateDir } from "./paths";
+import { toolsDir } from "./paths";
 import { lastJsonLine, runPython } from "./python";
 import { type MarketPolicy } from "@/lib/types";
 import { createHash } from "node:crypto";
@@ -20,7 +20,7 @@ export interface ValidatorResult {
 }
 
 async function runValidator(args: string[]): Promise<ValidatorResult> {
-  const script = join(templateDir, "scripts", "validate_plugin.py");
+  const script = join(toolsDir, "scripts", "validate_plugin.py");
   const run = await runPython(script, [...args, "--json"]);
   const lastLine = run.stdout.trim().split("\n").pop() ?? "";
   if ((run.code !== 0 && run.code !== 1) || !lastLine.startsWith("{")) {

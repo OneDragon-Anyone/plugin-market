@@ -1,6 +1,6 @@
 /** 构建状态：锁文件结构，以及一次构建共享的上下文。 */
 
-import { apiDir, lockCoversDir, lockPath, templateDir } from "./paths";
+import { apiDir, lockCoversDir, lockPath, toolsDir } from "./paths";
 import { type MarketPolicy, type PluginEntry, type PluginStats, type WarningCode } from "@/lib/types";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -20,7 +20,7 @@ export interface BuildContext {
   lockCoversDir: string;
   apiDir: string;
   previousApiUrl: string;
-  templateDir: string;
+  toolsDir: string;
   issueTarget: string;
   /** 上一版 stats.json 只拉一次，null 表示还没读 */
   previousStatsCache: Record<string, PluginStats> | null;
@@ -42,7 +42,7 @@ export function createBuildContext(policy: MarketPolicy, lock: Lock): BuildConte
     apiDir,
     /** 统一补上结尾斜杠 相对地址才能正确拼到上一版目录下 */
     previousApiUrl: previousApiBase === "" ? "" : `${previousApiBase.replace(/\/+$/, "")}/`,
-    templateDir,
+    toolsDir,
     /** 自动 issue 要写进去的仓库 空串表示这轮不发（本地跑默认不发） */
     issueTarget:
       process.env.MARKET_OPEN_ISSUES === "true" ? (process.env.GITHUB_REPOSITORY ?? "").trim() : "",

@@ -10,7 +10,7 @@ public/api/
 
 # CI working directories
 .lock/
-.plugin-template/
+.plugin-tools/
 
 # Logs
 *.log
