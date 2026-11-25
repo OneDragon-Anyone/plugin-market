@@ -1,4 +1,4 @@
-/** 目录约定：代码仓、数据仓、模板仓的落点都从这里取，环境变量在这里读一次。 */
+/** 目录约定：代码仓、数据仓、工具仓的落点都从这里取，环境变量在这里读一次。 */
 
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,5 +19,5 @@ export const lockCoversDir = join(lockDir, "covers");
 /** 站点直接读的索引产物 */
 export const apiDir = join(rootDir, "public", "api", "v1");
 
-/** 模板仓检出目录：校验脚本和构建摘要看的是同一个提交 */
-export const templateDir = resolve(process.env.TEMPLATE_DIR ?? ".plugin-template");
+/** 工具仓检出目录：插件包校验脚本从这里取，构建摘要看的是同一个提交 */
+export const toolsDir = resolve(process.env.TOOLS_DIR ?? ".plugin-tools");

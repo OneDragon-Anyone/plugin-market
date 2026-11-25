@@ -1,10 +1,6 @@
 # ZZZOD 插件市场仓
 
-自动审核插件提交、定时构建索引、渲染市场网页，并把索引与封面另发一份到 CNB。
-
-- 在线插件市场：<https://onedragon-anyone.github.io/plugin-data/>
-- 模板仓：<https://github.com/OneDragon-Anyone/plugin-template>（插件参考）
-- 数据仓：<https://github.com/OneDragon-Anyone/plugin-data>（插件提交）
+市场仓提供流程与代码：收录机器人审核提交并提 PR，定时构建抓取插件 Release、产出索引与页面，再把索引和封面镜像到 CNB。插件配置和索引产物存在数据仓，插件包的校验与打包由工具仓提供。
 
 ## 目录结构
 
@@ -43,7 +39,7 @@ pnpm build          # 前端打包构建
 # Windows PowerShell
 $env:GITHUB_TOKEN = (gh auth token)
 $env:MARKET_DATA_DIR = "../plugin-data"
-$env:TEMPLATE_DIR = "../plugin-template"
+$env:TOOLS_DIR = "../plugin-tools"
 pnpm market:build
 ```
 
@@ -51,9 +47,9 @@ pnpm market:build
 
 ## 版本与引用规范
 
-- 数据仓引用本仓库的可复用工作流默认写 `@master`，用本仓库最新代码；想固定就换成 `@v1` 这样的 tag。这个 ref 只能写死，不能写变量。
-- 工作流里检出本仓库代码用调用方 workflow 所在的提交（`job.workflow_sha`），工具代码与工作流文件不会错位。
-- 模板仓坐标与 tag 由调用方传（`template_repository` / `template_ref`），本仓库不写死版本。`template_ref` 留空时自动取模板仓最新的版本 tag，取不到就让流程失败。
+- 调用方（数据仓）引用市场仓的可复用工作流，默认写 `@master`，跟着最新代码走；想固定就换成 `@v1` 这样的 tag。这个 ref 只能写死，不能写变量。
+- 调用方（数据仓）传工具仓的坐标与 tag（`tools_repository` / `tools_ref`）；坐标必填，tag 留空取工具仓最新的版本 tag。插件包校验用的就是该仓的校验脚本。
+- 市场仓检出自身代码，用得是被调用工作流文件所在的提交（`job.workflow_sha`），所以调用方写 `@v1` 时，v1 的工作流配的也是 v1 的脚本，两边不会错位。
 
 ## 索引镜像
 

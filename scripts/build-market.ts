@@ -684,21 +684,21 @@ export async function renderSummary(ctx: BuildContext, published: number, total:
   return summary;
 }
 
-/** 一次构建由数据 / 市场 / 模板三份代码共同决定 摘要里按调用链顺序列全 */
+/** 一次构建由数据 / 市场 / 工具三份代码共同决定 摘要里按调用链顺序列全 */
 async function sourceVersions(ctx: BuildContext): Promise<string[]> {
   const lines: string[] = [];
 
   const data = dataVersion();
   const market = marketVersion();
-  const templateRepo = (process.env.TEMPLATE_REPOSITORY ?? "").trim();
-  const template: SourceVersion = {
-    name: shortRepo(templateRepo) || "template",
-    repo: templateRepo,
-    version: (process.env.TEMPLATE_REF ?? "").trim(),
-    sha: await templateCommit(ctx)
+  const toolsRepo = (process.env.TOOLS_REPOSITORY ?? "").trim();
+  const tools: SourceVersion = {
+    name: shortRepo(toolsRepo) || "tools",
+    repo: toolsRepo,
+    version: (process.env.TOOLS_REF ?? "").trim(),
+    sha: await toolsCommit(ctx)
   };
 
-  for (const source of [data, market, template]) {
+  for (const source of [data, market, tools]) {
     const line = sourceLine(source);
     if (line !== "") lines.push(line);
   }
@@ -708,7 +708,7 @@ async function sourceVersions(ctx: BuildContext): Promise<string[]> {
 
 /** 一行一项 形如 [`plugin-market@v1`](tag) ([`1f6da8b`](commit)) 点名和版本合成一个链接 */
 function sourceLine(source: SourceVersion): string {
-  // 本地直接跑脚本时这些环境变量都不存在 拼出来只会剩 data / market / template 三个空壳
+  // 本地直接跑脚本时这些环境变量都不存在 拼出来只会剩 data / market / tools 三个空壳
   if (source.repo === "") return "";
   const base = repoPage(source.repo);
   const commit = source.sha === "" ? "" : linked(source.sha.slice(0, 7), `${base}/commit/${source.sha}`);
@@ -759,10 +759,10 @@ function marketVersion(): SourceVersion {
   return { name: shortRepo(repo) || "market", repo, version: shortRef(rawRef), sha };
 }
 
-/** 模板仓当前检出的提交 拿不到就留空 不让摘要因此失败 */
-async function templateCommit(ctx: BuildContext): Promise<string> {
+/** 工具仓当前检出的提交 拿不到就留空 不让摘要因此失败 */
+async function toolsCommit(ctx: BuildContext): Promise<string> {
   try {
-    const { stdout } = await runGit("git", ["rev-parse", "HEAD"], { cwd: ctx.templateDir });
+    const { stdout } = await runGit("git", ["rev-parse", "HEAD"], { cwd: ctx.toolsDir });
     return stdout.trim();
   } catch {
     return "";
