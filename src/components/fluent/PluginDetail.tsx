@@ -96,15 +96,15 @@ export const PluginDetail: React.FC<PluginDetailProps> = ({ plugin }) => {
               <p className="detail-summary">{plugin.summary}</p>
 
               <div className="plugin-tags mt-3">
-                {plugin.risk.map((risk) => (
-                  <span key={risk} className="risk-chip">
-                    {riskLabels[risk]}
-                  </span>
-                ))}
                 {plugin.tags.map((tag) => (
                   <Tag key={tag} size="small" appearance="outline">
                     #{tag}
                   </Tag>
+                ))}
+                {plugin.risk.map((risk) => (
+                  <span key={risk} className="risk-chip">
+                    {riskLabels[risk]}
+                  </span>
                 ))}
               </div>
 
