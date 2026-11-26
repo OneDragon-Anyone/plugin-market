@@ -15,8 +15,11 @@ export type RiskTag = (typeof RISK_TAGS)[number];
 
 /** 提交规则，站点预检与收录机器人共用一份 */
 export const ID_PATTERN = /^[a-z][a-z0-9_]*$/;
-export const TAG_PATTERN = /^[a-z0-9][a-z0-9-]{0,23}$/;
+/** 标签收英文小写、数字、连字符和中文，中英文都按字符数计，最长 24 个字符 */
+export const TAG_PATTERN = /^[\p{Script=Han}a-z0-9][\p{Script=Han}a-z0-9-]{0,23}$/u;
 export const MAX_TAGS = 8;
+/** 标签规则的人话说明，站点报错与机器人评论共用，避免两处措辞走偏 */
+export const TAG_RULE_HINT = "只能包含中文（推荐）、小写字母、数字、和 -";
 
 export type WarningCode =
   | "version_not_increased"
