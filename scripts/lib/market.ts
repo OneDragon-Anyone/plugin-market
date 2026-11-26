@@ -7,6 +7,7 @@ import {
   ID_PATTERN,
   TAG_PATTERN,
   MAX_TAGS,
+  TAG_RULE_HINT,
   type MarketPolicy,
   type MarketSourceEntry
 } from "@/lib/types";
@@ -16,7 +17,7 @@ import { join } from "node:path";
 // ---- 条目读取与校验 ----
 
 /** 规则常量来自 @/lib/types，这里保留原有导入路径给下游脚本 */
-export { ID_PATTERN, TAG_PATTERN, MAX_TAGS };
+export { ID_PATTERN, TAG_PATTERN, MAX_TAGS, TAG_RULE_HINT };
 const STATUSES = new Set(["listed", "hidden", "deprecated", "suspended", "removed"]);
 const ENTRY_KEYS = new Set(["id", "repo", "repoId", "tags", "extraRisk", "status", "pinned", "mirror", "review"]);
 const REVIEW_KEYS = new Set(["issue", "pr", "submittedBy"]);

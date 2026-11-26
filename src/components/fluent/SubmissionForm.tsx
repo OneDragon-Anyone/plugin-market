@@ -17,7 +17,7 @@ import {
 } from "@fluentui/react-icons";
 import { issueUrl } from "@/lib/site";
 import { withBase } from "@/lib/utils";
-import { RISK_TAGS, ID_PATTERN, TAG_PATTERN, MAX_TAGS } from "@/lib/types";
+import { RISK_TAGS, ID_PATTERN, TAG_PATTERN, MAX_TAGS, TAG_RULE_HINT } from "@/lib/types";
 import { riskLabels } from "@/lib/risk";
 
 const REPO_PATTERN = /^https:\/\/github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?\/?$/;
@@ -56,7 +56,7 @@ export const SubmissionForm: React.FC = () => {
     () => [
       ...new Set(
         tags
-          .split(/[,，\s]+/)
+          .split(/[,，、\s]+/)
           .map((t) => t.trim().toLowerCase())
           .filter(Boolean)
       )
@@ -67,7 +67,7 @@ export const SubmissionForm: React.FC = () => {
   const tagError = useMemo(() => {
     if (parsedTags.length > MAX_TAGS) return `标签最多 ${MAX_TAGS} 个`;
     return parsedTags.some((t) => !TAG_PATTERN.test(t))
-      ? "标签只能包含小写字母、数字和 -"
+      ? `标签${TAG_RULE_HINT}`
       : "";
   }, [parsedTags]);
 
@@ -284,11 +284,11 @@ export const SubmissionForm: React.FC = () => {
           </div>
         </Field>
 
-        <Field label="补充标签（可选，以逗号分隔）" validationMessage={tagError}>
+        <Field label="补充标签（可选，以逗号或顿号分隔）" validationMessage={tagError}>
           <Input
             value={tags}
             onChange={(_, d) => setTags(d.value)}
-            placeholder="如：music-game, battle, tools"
+            placeholder="如：工具、活动、补丁"
           />
         </Field>
 

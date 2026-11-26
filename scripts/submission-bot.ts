@@ -16,7 +16,7 @@ import {
   GitHubError
 } from "./lib/github";
 import { formatSize } from "./lib/format";
-import { readPolicy, ID_PATTERN, MAX_TAGS, TAG_PATTERN, formatEntry } from "./lib/market";
+import { readPolicy, ID_PATTERN, MAX_TAGS, TAG_PATTERN, TAG_RULE_HINT, formatEntry } from "./lib/market";
 import { pluginsDir } from "./lib/paths";
 import { errorMessage, run, withTempDir } from "./lib/runtime";
 import { StepSummary } from "./lib/summary";
@@ -268,7 +268,7 @@ function parseTags(body: string): string[] {
   return [
     ...new Set(
       match[1]
-        .split(/[,，\s]+/)
+        .split(/[,，、\s]+/)
         .map((tag) => tag.trim().toLowerCase())
         .filter(Boolean)
     )
@@ -458,7 +458,7 @@ export async function checkSubmission(
 
   const tags = parseTags(body);
   if (tags.length > MAX_TAGS || tags.some((tag) => !TAG_PATTERN.test(tag))) {
-    errors.push(`标签最多 ${MAX_TAGS} 个，只能包含小写字母、数字和 \`-\`：${tags.join(", ")}`);
+    errors.push(`标签最多 ${MAX_TAGS} 个，${TAG_RULE_HINT}：${tags.join(", ")}`);
   }
 
   const manifest = await findPackageManifest(repo, errors, notes);
