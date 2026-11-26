@@ -225,15 +225,15 @@ export const PluginExplorer: React.FC<PluginExplorerProps> = ({ plugins }) => {
                 <p className="plugin-summary">{plugin.summary}</p>
 
                 <div className="plugin-tags">
-                  {plugin.risk.map((risk) => (
-                    <span key={risk} className="risk-chip">
-                      {riskLabels[risk]}
-                    </span>
-                  ))}
                   {plugin.tags.map((tag) => (
                     <Tag key={tag} size="small" appearance="outline">
                       #{tag}
                     </Tag>
+                  ))}
+                  {plugin.risk.map((risk) => (
+                    <span key={risk} className="risk-chip">
+                      {riskLabels[risk]}
+                    </span>
                   ))}
                 </div>
 
