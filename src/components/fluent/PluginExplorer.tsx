@@ -230,7 +230,7 @@ export const PluginExplorer: React.FC<PluginExplorerProps> = ({ plugins }) => {
                       {riskLabels[risk]}
                     </span>
                   ))}
-                  {plugin.tags.slice(0, 3).map((tag) => (
+                  {plugin.tags.map((tag) => (
                     <Tag key={tag} size="small" appearance="outline">
                       #{tag}
                     </Tag>
