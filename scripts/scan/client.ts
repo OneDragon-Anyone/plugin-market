@@ -31,8 +31,8 @@ export type ScanCheck = "static" | "dependency" | "malware";
 export interface ScanOptions {
   /** 只跑这几类，不给就三类都跑 */
   checks?: ScanCheck[];
-  /** 主程序环境里已经装好的 import 名，不当作第三方依赖 */
-  hostPackages?: string[];
+  /** 客户端环境里已经装好的 import 名，不当作第三方依赖 */
+  clientPackages?: string[];
   /** 市场上已收录的插件 id，插件之间互相 import 不算第三方依赖 */
   knownPlugins?: string[];
 }
@@ -41,7 +41,7 @@ export interface ScanOptions {
 export async function scanZip(zipPath: string, options: ScanOptions = {}): Promise<ScanReport> {
   const args = ["--zip", zipPath];
   if (options.checks?.length) args.push("--checks", options.checks.join(","));
-  if (options.hostPackages?.length) args.push("--host-packages", options.hostPackages.join(","));
+  if (options.clientPackages?.length) args.push("--client-packages", options.clientPackages.join(","));
   if (options.knownPlugins?.length) args.push("--known-plugins", options.knownPlugins.join(","));
   const run = await runPython(scannerPath, args);
   const line = run.stdout.trim().split("\n").pop() ?? "";
