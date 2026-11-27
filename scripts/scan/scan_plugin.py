@@ -37,11 +37,11 @@ from common import (
 def scan_zip(
     zip_path: str,
     plugin_roots: set[str] | None = None,
-    host_roots: set[str] | None = None,
+    client_roots: set[str] | None = None,
     checks: set[str] | None = None,
 ) -> dict[str, Any]:
     plugin_roots = plugin_roots or set()
-    host_roots = host_roots or set()
+    client_roots = client_roots or set()
     checks = checks or {"static", "dependency", "malware"}
     findings: list[dict[str, Any]] = []
     scanned = 0
@@ -90,7 +90,7 @@ def scan_zip(
                             findings.extend(static_scan.scan_python_calls(name, data.decode("utf-8", "replace"), tree))
                         if "dependency" in checks:
                             findings.extend(
-                                dependency_scan.scan_python_imports(name, tree, package_roots, host_roots, plugin_roots)
+                                dependency_scan.scan_python_imports(name, tree, package_roots, client_roots, plugin_roots)
                             )
                 if "malware" in checks:
                     findings.extend(malware_scan.scan_text(name, data))
@@ -127,9 +127,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Scan a plugin release ZIP without executing its code.")
     parser.add_argument("--zip", required=True, help="Path to the release <id>.zip")
     parser.add_argument(
-        "--host-packages",
+        "--client-packages",
         default="",
-        help="Comma separated import names already installed by the host program; not third-party dependencies",
+        help="Comma separated import names already installed by the client program; not third-party dependencies",
     )
     parser.add_argument(
         "--known-plugins",
@@ -148,10 +148,10 @@ def main() -> None:
         print(json.dumps({"error": f"file not found: {path}"}))
         return
     plugin_roots = {item.strip() for item in args.known_plugins.split(",") if item.strip()}
-    host_roots = {item.strip() for item in args.host_packages.split(",") if item.strip()}
+    client_roots = {item.strip() for item in args.client_packages.split(",") if item.strip()}
     checks = {item.strip() for item in args.checks.split(",") if item.strip()}
     try:
-        report = scan_zip(str(path), plugin_roots, host_roots, checks)
+        report = scan_zip(str(path), plugin_roots, client_roots, checks)
     except (zipfile.BadZipFile, OSError) as exc:
         print(json.dumps({"error": str(exc)}))
         return

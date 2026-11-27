@@ -21,9 +21,10 @@ import { pluginsDir } from "./lib/paths";
 import { errorMessage, run, withTempDir } from "./lib/runtime";
 import { StepSummary } from "./lib/summary";
 import { checkLatestRelease } from "./lib/validator";
-import { loadHostPackages } from "./scan/host_packages";
+import { loadClientPackages } from "./scan/client_packages";
 import { describeScan, findingLines, scanZip, type ScanCheck, type ScanReport } from "./scan/client";
 import { type MarketPolicy, type MarketSourceEntry } from "@/lib/types";
+import { resolveClient } from "@/lib/config";
 import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -73,7 +74,7 @@ async function handleSubmission(
     return;
   }
 
-  await withTempDir("zzzod-submission-", async (workDir) => {
+  await withTempDir("submission-", async (workDir) => {
     const check = await checkSubmission(issue, policy, workDir);
     await writeStepSummary(issue, check);
     if (check.errors.length > 0 || !check.entry || !check.preview) {
@@ -86,7 +87,10 @@ async function handleSubmission(
           "",
           ...check.errors.map((error) => `- ${error}`),
           "",
-          "修复后在本 Issue 回复 `/recheck` 重新校验。插件模板和发布说明见 https://github.com/OneDragon-Anyone/plugin-template 。"
+          "修复后在本 Issue 回复 `/recheck` 重新校验。" +
+            (policy.templateRepository
+              ? `插件模板和发布说明见 https://github.com/${policy.templateRepository} 。`
+              : "")
         ].join("\n")
       );
       return;
@@ -350,19 +354,26 @@ async function findPackageManifest(
 
 /**
  * 收录前对安装包做一次完整扫描，三类规则都跑。
- * 主程序包清单取不到就只跳过依赖这一类——那时候所有自带包都会被当成第三方，
+ * 客户端包清单取不到就只跳过依赖这一类——那时候所有自带包都会被当成第三方，
  * 报出来全是噪音；静态扫描和恶意特征扫描照查，不依赖那份清单。
  */
-async function scanSubmission(workDir: string, zipPath: string, notes: string[]): Promise<ScanReport | null> {
-  const hostPackages = await loadHostPackages(workDir, () => {});
+async function scanSubmission(
+  workDir: string,
+  zipPath: string,
+  notes: string[],
+  policy: MarketPolicy
+): Promise<ScanReport | null> {
+  const client = resolveClient(policy.client);
+  const scanned = client ? await loadClientPackages(client, workDir, () => {}) : { modules: [], fromLock: false };
   const checks: ScanCheck[] = ["static", "malware"];
-  if (hostPackages.length > 0) checks.unshift("dependency");
-  else notes.push("主程序自带包清单没取到，这次没查第三方依赖，其余检查照做了。");
+  if (scanned.fromLock) checks.unshift("dependency");
+  else if (!client) notes.push("数据仓没给客户端配依赖锁文件，这次没查第三方依赖，其余检查照做了。");
+  else notes.push("客户端自带包清单没取到，这次没查第三方依赖，其余检查照做了。");
   const knownPlugins = (await readdir(pluginsDir).catch(() => [] as string[]))
     .filter((file) => file.endsWith(".json"))
     .map((file) => file.slice(0, -".json".length));
   try {
-    return await scanZip(zipPath, { checks, hostPackages, knownPlugins });
+    return await scanZip(zipPath, { checks, clientPackages: scanned.modules, knownPlugins });
   } catch (error) {
     notes.push(`安全扫描没跑起来（${errorMessage(error).slice(0, 160)}），合并前请自己看一下源码。`);
     return null;
@@ -424,7 +435,7 @@ async function writeStepSummary(issue: Issue, check: SubmissionCheck): Promise<v
 
 /**
  * 校验一条收录申请。
- * 只读 GitHub 和本地数据仓，除了在临时目录里下载附件、写一份主程序包清单快照，不写任何东西：
+ * 只读 GitHub 和本地数据仓，除了在临时目录里下载附件、写一份客户端包清单快照，不写任何东西：
  * 通过就返回待提交的条目、预览表格和扫描结论，不通过就把原因堆进 errors。发 PR、打标签那些是调用方的事。
  * 扫描结论不参与这个判定 —— 它只写进评论给维护者看，拦不拦由人决定。
  */
@@ -482,7 +493,7 @@ export async function checkSubmission(
   if (errors.length > 0 || !release.release || !release.check || !release.zipPath) return { errors, notes };
 
   // 扫描结论只进评论，不进 errors：它说明这个包有什么问题，收录与否仍由自动校验和维护者决定
-  const scan = await scanSubmission(workDir, release.zipPath, notes);
+  const scan = await scanSubmission(workDir, release.zipPath, notes, policy);
 
   const zipManifest = release.check.result.manifest;
   const entry: MarketSourceEntry = {

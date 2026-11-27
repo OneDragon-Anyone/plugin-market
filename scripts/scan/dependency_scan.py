@@ -1,7 +1,7 @@
-"""依赖扫描：插件包有没有绕开主程序自带的依赖体系。
+"""依赖扫描：插件包有没有绕开客户端自带的依赖体系。
 
 检查包内是否夹带依赖清单、捆绑依赖目录、可执行脚本，以及 Python 源码是否引用了
-标准库和主程序之外的第三方包。静态代码规则在 static_scan.py。
+标准库和客户端之外的第三方包。静态代码规则在 static_scan.py。
 """
 
 from __future__ import annotations
@@ -20,8 +20,6 @@ from common import (
 )
 
 # 依赖扫描的规则数据，跟模块一起增删
-# 主程序自己的模块
-HOST_ROOTS = {"one_dragon", "one_dragon_qt", "zzz_od"}
 STDLIB_ROOTS = set(sys.stdlib_module_names)
 NETWORK_ROOTS = {
     "socket", "urllib", "requests", "httpx", "aiohttp", "ftplib",
@@ -40,14 +38,15 @@ def scan_python_imports(
     file: str,
     tree: ast.AST,
     package_roots: set[str],
-    host_roots: set[str],
+    client_roots: set[str],
     plugin_roots: set[str],
 ) -> list[dict[str, Any]]:
-    """源码里的 import：网络模块提示确认，标准库、主程序与已上架插件之外的包提示第三方。
+    """源码里的 import：网络模块提示确认，标准库、客户端与已上架插件之外的包提示第三方。
 
-    host_roots 是主程序环境里已经装好的 import 名，由调用方从主程序的 uv.lock 换算后传进来，
-    不在这里手抄。plugin_roots 是市场上其它已收录插件的 id：插件之间互相 import 属正常依赖，
-    不是绕开主程序依赖体系，按第三方包报会误导维护者。
+    client_roots 是客户端环境里已经能 import 的名字，由调用方按数据仓的客户端配置传进来
+    （客户端自带模块根 + 从客户端依赖清单换算出的包名），不在这里手抄。
+    plugin_roots 是市场上其它已收录插件的 id：插件之间互相 import 属正常依赖，
+    不是绕开客户端依赖体系，按第三方包报会误导维护者。
     """
     out: list[dict[str, Any]] = []
     for node in ast.walk(tree):
@@ -73,8 +72,7 @@ def scan_python_imports(
                 continue
             if (
                 root in STDLIB_ROOTS
-                or root in HOST_ROOTS
-                or root in host_roots
+                or root in client_roots
                 or root == "__future__"
                 or root in package_roots
                 or root in plugin_roots
@@ -87,7 +85,7 @@ def scan_python_imports(
                     DEPENDENCY,
                     file,
                     line,
-                    f"主程序未内置 {root}，插件需随包提供或改为可选导入，否则用户机器上这处 import 会失败",
+                    f"客户端未内置 {root}，插件需随包提供或改为可选导入，否则用户机器上这处 import 会失败",
                 )
             )
     return out
@@ -102,12 +100,12 @@ def scan_package_files(file: str) -> list[dict[str, Any]]:
 
     if suffix in SCRIPT_SUFFIXES:
         out.append(
-            finding("SCRIPT_IN_PACKAGE", REVIEW, DEPENDENCY, file, 0, f"包内带 {suffix} 脚本，说明用途或移出安装包；主程序不需要外部脚本")
+            finding("SCRIPT_IN_PACKAGE", REVIEW, DEPENDENCY, file, 0, f"包内带 {suffix} 脚本，说明用途或移出安装包；客户端不需要外部脚本")
         )
     if name in DEPENDENCY_FILES or (name.startswith("requirements") and name.endswith(".txt")):
-        out.append(finding("DEPENDENCY_FILE", BLOCK, DEPENDENCY, file, 0, f"包内带依赖清单 {name}，移除；依赖由主程序统一提供"))
+        out.append(finding("DEPENDENCY_FILE", BLOCK, DEPENDENCY, file, 0, f"包内带依赖清单 {name}，移除；依赖由客户端统一提供"))
     # 目录名逐段比，从包根开始算：插件包的 plugin.json 就在根上，没有外层包装目录，
     # 只从第二段看会漏掉 vendor/、site-packages/ 这种直接放在根上的情况
     if any(part.lower() in {"site-packages", "node_modules", "vendor", "__pycache__"} for part in path.parts[:-1]):
-        out.append(finding("BUNDLED_DEPENDENCY_DIR", BLOCK, DEPENDENCY, file, 0, "包内捆绑了依赖目录，移除；依赖由主程序统一提供"))
+        out.append(finding("BUNDLED_DEPENDENCY_DIR", BLOCK, DEPENDENCY, file, 0, "包内捆绑了依赖目录，移除；依赖由客户端统一提供"))
     return out

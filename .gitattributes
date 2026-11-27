@@ -1,0 +1,2 @@
+# 仓库统一 LF：入库与检出都保持 LF，不受本地 core.autocrlf 影响
+* text=auto eol=lf

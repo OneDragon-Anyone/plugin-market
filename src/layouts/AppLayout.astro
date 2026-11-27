@@ -3,6 +3,7 @@ import "../styles.css";
 import { ClientRouter } from "astro:transitions";
 import { createCSSRuleFromTheme } from "@fluentui/react-components";
 import { win11Themes } from "@/theme/win11";
+import { siteConfig } from "@/lib/site";
 
 // FluentProvider 的 token 样式由 React 在客户端注入，SSR 输出固定为深色：
 // 浅色用户从首帧到 hydration 完成之间，卡片、按钮等会先用深色 token 渲染再突然翻白。
@@ -21,7 +22,7 @@ interface Props {
 
 const {
   title,
-  description = "ZZZ OneDragon 插件仓库：发现、安装与提交 ZZZOD 插件。",
+  description = siteConfig.description,
   islandStyles = ""
 } = Astro.props;
 ---
@@ -38,11 +39,11 @@ const {
     <title>{title}</title>
     <ClientRouter />
     <style is:inline set:html={themeTokens} />
-    <script is:inline>
+    <script is:inline define:vars={{ themeKey: `${siteConfig.storagePrefix}-theme` }}>
       (function () {
         var applyTheme = function () {
           try {
-            var saved = localStorage.getItem("zzzod-theme");
+            var saved = localStorage.getItem(themeKey);
             var mode =
               saved === "light" || saved === "dark"
                 ? saved

@@ -25,7 +25,7 @@ import {
   ChevronRight20Regular
 } from "@fluentui/react-icons";
 import { withBase } from "@/lib/utils";
-import { siteConfig } from "@/lib/site";
+import { siteConfig, brandSuffix } from "@/lib/site";
 import { IslandStyleRendererContext } from "@/lib/fluent-ssr-context";
 import { win11Themes } from "@/theme/win11";
 import {
@@ -43,7 +43,7 @@ interface FluentShellProps {
   children?: React.ReactNode;
 }
 
-const NAV_COLLAPSED_KEY = "zzzod-nav-collapsed";
+const NAV_COLLAPSED_KEY = `${siteConfig.storagePrefix}-nav-collapsed`;
 
 const navItems: { key: NavKey; label: string; href: string; icon: React.ReactNode }[] = [
   { key: "explore", label: "插件市场", href: "/", icon: <Apps20Regular /> },
@@ -56,14 +56,14 @@ const useIsomorphicLayoutEffect =
   typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 const Brand: React.FC<{ collapsed: boolean }> = ({ collapsed }) => (
-  <a href={withBase("/")} className="app-brand" aria-label="ZZZOD Plugins 首页">
+  <a href={withBase("/")} className="app-brand" aria-label={`${brandSuffix()} 首页`}>
     <span className="app-logo" aria-hidden="true">
-      OD
+      {siteConfig.logo}
     </span>
     {!collapsed && (
       <span className="app-brand-text">
-        <strong>ZZZOD</strong>
-        <span>Plugins</span>
+        <strong>{siteConfig.short}</strong>
+        {siteConfig.subtitle && <span>{siteConfig.subtitle}</span>}
       </span>
     )}
   </a>
