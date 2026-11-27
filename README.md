@@ -53,12 +53,11 @@ pnpm market:build
 
 插件包不经过本仓库，默认取作者仓库的 GitHub Release 直链；作者自建镜像的写法见数据仓 README。
 
-## 工作流的调用约定
+## 工作流的接口
 
-- 调用方（数据仓）引用市场仓的三个可复用工作流，默认写 `@master`，跟着最新代码走；想固定就换成 `@v1` 这样的 tag。这个 ref 只能写死，不能写变量。
-- 调用方（数据仓）传工具仓的坐标与 tag（`tools_repository` / `tools_ref`）；坐标必填，tag 留空取工具仓最新的版本 tag。插件包校验用的就是该仓的校验脚本。
-- 市场仓自身的坐标不用传：检出时用的是被调用工作流文件所在的仓库与提交（`job.workflow_repository` / `job.workflow_sha`），所以调用方写 `@v1` 时，v1 的工作流配的也是 v1 的脚本，两边不会错位。
-- 调用方（数据仓）的仓库变量 `SITE_URL` 与 `SITE_BASE_PATH` 决定站点地址与 base，不配时按 GitHub Pages 的地址和 `/plugin-data` 走。
+- 三个可复用工作流只接受两个输入：工具仓的坐标（必填）与它的 tag（留空取该仓最新的版本 tag）。插件包校验用的就是那个仓的脚本。
+- 市场仓自身的坐标不用传：检出用的是被调用工作流文件所在的仓库与提交（`job.workflow_repository` / `job.workflow_sha`），调用方写哪个 tag，配的就是哪个版本的脚本。
+- 站点地址与 base 从调用方的仓库变量读（`SITE_URL` / `SITE_BASE_PATH`），不配时按 GitHub Pages 的地址和 `/plugin-data` 走；索引镜像的凭证是 `CNB_TOKEN`，没有就跳过镜像。
 
 ## 调用方的实例配置
 
