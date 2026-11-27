@@ -39,7 +39,7 @@ async function main(): Promise<void> {
   const deep: string[] = [];
 
   if (resolveRepos || deepIds.size > 0) {
-    await withTempDir("zzzod-validate-", async (workDir) => {
+    await withTempDir("validate-", async (workDir) => {
       for (const entry of entries) {
         if (entry.status === "removed") continue;
         const repo = await orNull(github<GhRepo>(`/repositories/${entry.repoId}`));

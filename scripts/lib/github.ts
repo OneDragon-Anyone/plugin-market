@@ -3,7 +3,7 @@
 // ---- REST 客户端 ----
 
 const API = "https://api.github.com";
-const USER_AGENT = "zzzod-plugin-market";
+const USER_AGENT = "plugin-market";
 
 export class GitHubError extends Error {
   constructor(
