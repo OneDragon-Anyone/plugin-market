@@ -38,7 +38,7 @@ async function main(): Promise<void> {
   const { entries, errors } = checkEntries(await readEntryFiles(), policy);
   if (errors.length > 0) throw new Error(`market entries are invalid:\n${errors.join("\n")}`);
 
-  const plugins = await withTempDir("zzzod-market-", async (workDir) => {
+  const plugins = await withTempDir("market-", async (workDir) => {
     const built: BuiltPlugin[] = [];
     for (const entry of entries) {
       if (entry.status === "removed" || policy.bannedRepoIds.includes(entry.repoId)) continue;
@@ -747,16 +747,13 @@ function dataVersion(): SourceVersion {
   };
 }
 
-/** 市场是 reusable workflow 自己 仓库和版本要从 workflow_ref 里拆 */
+/** 市场是 reusable workflow 自己 坐标和提交由 job.workflow_* 直接给，ref 只取最后一段 */
 function marketVersion(): SourceVersion {
   const ref = (process.env.MARKET_REF ?? "").trim();
   const sha = (process.env.MARKET_SHA ?? "").trim();
-  if (ref === "") return { name: "market", repo: "", version: "", sha };
-
-  // 形如 owner/repo/.github/workflows/x.yml@refs/tags/v1
-  const [path = "", rawRef = ""] = ref.split("@");
-  const repo = path.split("/.github/workflows/")[0] ?? "";
-  return { name: shortRepo(repo) || "market", repo, version: shortRef(rawRef), sha };
+  const repo = (process.env.MARKET_REPOSITORY ?? "").trim();
+  const version = ref.includes("@") ? shortRef(ref.slice(ref.lastIndexOf("@") + 1)) : "";
+  return { name: shortRepo(repo) || "market", repo, version, sha };
 }
 
 /** 工具仓当前检出的提交 拿不到就留空 不让摘要因此失败 */

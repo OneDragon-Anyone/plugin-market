@@ -28,11 +28,12 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
-      - name: Checkout tools
+      # 坐标与提交都取自这个 workflow 文件本身：调用方 uses 指向哪个仓、哪个 ref，这里就检出哪个，
+      # 不用把市场仓写成参数
+      - name: Checkout market
         uses: actions/checkout@v6
         with:
-          repository: OneDragon-Anyone/plugin-market
-          # 取当前 reusable workflow 所在提交，避免调用方改了版本号这里没跟上
+          repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .tools
           persist-credentials: false
