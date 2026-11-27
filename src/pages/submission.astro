@@ -2,13 +2,14 @@
 import AppLayout from "@/layouts/AppLayout.astro";
 import SubmissionApp from "@/components/app/SubmissionApp";
 import { extractFluentStyles } from "@/lib/fluent-ssr";
+import { pageTitle, siteConfig } from "@/lib/site";
 
 const islandStyles = extractFluentStyles(SubmissionApp);
 ---
 
 <AppLayout
-  title="提交插件 · ZZZOD Plugins"
-  description="预检 GitHub 仓库并提交 ZZZOD 插件收录申请。"
+  title={pageTitle("提交插件")}
+  description={`预检 GitHub 仓库并提交 ${siteConfig.short} 插件收录申请。`}
   islandStyles={islandStyles}
 >
   <SubmissionApp client:load />

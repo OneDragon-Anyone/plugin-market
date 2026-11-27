@@ -3,6 +3,7 @@ import AppLayout from "@/layouts/AppLayout.astro";
 import PluginApp from "@/components/app/PluginApp";
 import { extractFluentStyles } from "@/lib/fluent-ssr";
 import { getPlugin, getPlugins } from "@/lib/data";
+import { brandSuffix } from "@/lib/site";
 import { withBase } from "@/lib/utils";
 
 export async function getStaticPaths() {
@@ -23,7 +24,7 @@ const islandStyles = extractFluentStyles(PluginApp, { plugin });
 ---
 
 <AppLayout
-  title={`${plugin.name} · ZZZOD Plugins`}
+  title={`${plugin.name} · ${brandSuffix()}`}
   description={plugin.summary}
   islandStyles={islandStyles}
 >

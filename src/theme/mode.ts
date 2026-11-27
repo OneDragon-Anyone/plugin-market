@@ -1,8 +1,10 @@
 import type { ThemeMode } from "./win11";
+import { siteConfig } from "@/lib/site";
 
 export type { ThemeMode } from "./win11";
 
-export const THEME_STORAGE_KEY = "zzzod-theme";
+/** 存储前缀来自数据仓的站点配置，同一浏览器访问多个市场时互不覆盖 */
+export const THEME_STORAGE_KEY = `${siteConfig.storagePrefix}-theme`;
 
 export function resolveThemeMode(): ThemeMode {
   if (typeof window === "undefined") return "dark";

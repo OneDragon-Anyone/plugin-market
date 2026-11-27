@@ -2,13 +2,14 @@
 import AppLayout from "@/layouts/AppLayout.astro";
 import PolicyApp from "@/components/app/PolicyApp";
 import { extractFluentStyles } from "@/lib/fluent-ssr";
+import { pageTitle, siteConfig } from "@/lib/site";
 
 const islandStyles = extractFluentStyles(PolicyApp);
 ---
 
 <AppLayout
-  title="规范政策 · ZZZOD Plugins"
-  description="ZZZOD 插件的权限风险标签与分发状态规范。"
+  title={pageTitle("规范政策")}
+  description={`${siteConfig.short} 插件的权限风险标签与分发状态规范。`}
   islandStyles={islandStyles}
 >
   <PolicyApp client:load />

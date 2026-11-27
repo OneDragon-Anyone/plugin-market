@@ -3,14 +3,15 @@ import AppLayout from "@/layouts/AppLayout.astro";
 import MarketApp from "@/components/app/MarketApp";
 import { extractFluentStyles } from "@/lib/fluent-ssr";
 import { getPlugins } from "@/lib/data";
+import { pageTitle, siteConfig } from "@/lib/site";
 
 const plugins = await getPlugins();
 const islandStyles = extractFluentStyles(MarketApp, { plugins });
 ---
 
 <AppLayout
-  title="插件市场 · ZZZOD Plugins"
-  description="发现、安装与提交 ZZZ OneDragon 插件。"
+  title={pageTitle("插件市场")}
+  description={siteConfig.description}
   islandStyles={islandStyles}
 >
   <MarketApp client:load plugins={plugins} />
