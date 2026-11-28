@@ -59,7 +59,7 @@ pnpm market:build
 
 - 市场仓：坐标不用传，`uses` 写哪个 tag，配的就是那个版本的脚本。
 - 工具仓：坐标必填，版本 tag 留空时取该仓最新的版本 tag。插件包校验跑的就是那个仓的脚本。
-- 站点地址与 base：`site_url` 不传按 GitHub Pages 的域名，`site_base_path` 不传表示部署在域名根。
+- 站点地址与 base：`site_url` 不传按 GitHub Pages 的域名，`site_base_path` 不传按仓库名，部署在域名根时传 `/`。
 - 索引镜像的凭证是 `CNB_TOKEN`，没配就会跳过镜像。
 
 ## 调用方的实例配置
