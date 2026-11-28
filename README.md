@@ -73,7 +73,7 @@ pnpm market:build
     "description": "发现、安装与提交 ZZZ OneDragon 插件。"
   },
   "client": {
-    "lockUrl": "https://raw.githubusercontent.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/main/uv.lock",
+    "lockUrls": ["https://raw.githubusercontent.com/OneDragon-Anything/ZenlessZoneZero-OneDragon/main/uv.lock"],
     "moduleRoots": ["one_dragon", "one_dragon_qt", "zzz_od"]
   },
   "templateRepository": "OneDragon-Anyone/plugin-template"
@@ -84,7 +84,7 @@ pnpm market:build
 - `site.name` 只出现在页面最底部的页脚，不参与标题，也不参与描述。
 - `site.description` 是全站默认的 meta description，首页用它，其余页面各有自己的；页面上不显示，只在搜索结果和分享预览里。
 - 浏览器存储键前缀不用配，由 `site.short` 小写派生（`zzzod-theme`、`zzzod-nav-collapsed`）；同一域名下挂多个市场时，简称不同就互不覆盖，改简称会让已存的主题与导航状态失效一次。
-- `client.lockUrl` 是客户端依赖锁文件的 raw 直链（不要填 `github.com/.../blob/...` 这种网页地址，它返回的是 HTML，解析不出包名），目前按 `name = "..."` 行解析，适用于 uv.lock。
+- `client.lockUrls` 是客户端依赖锁文件的 raw 直链（不要填 `github.com/.../blob/...` 这种网页地址，它返回的是 HTML，解析不出包名），目前按 `name = "..."` 行解析，适用于 uv.lock；可以填多份，包名合并成一份白名单。
 - `client.moduleRoots` 是客户端自身代码的顶层包名。依赖扫描拿插件里的 import 与「客户端自带的东西」比对，锁文件只覆盖 pip 装的包，客户端自己的代码不在里面，所以得单独列出来，否则插件 import 这些模块会被当成第三方依赖报出来。OneDragon 这边是 `one_dragon`（框架核心）、`one_dragon_qt`（Qt 界面层）、`zzz_od`（本作业务层）。
 - `templateRepository` 是插件模板仓的 `owner/name`。作者提交后校验没通过时，机器人在 Issue 里回的错误清单末尾会附这个链接；不配就不附那一句。
 
