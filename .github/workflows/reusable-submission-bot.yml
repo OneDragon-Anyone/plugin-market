@@ -30,6 +30,17 @@ jobs:
     name: submission-bot
     runs-on: ubuntu-latest
     steps:
+      - name: Normalize site env
+        id: site
+        run: |
+          # 首尾多余的斜杠都收掉 再补一个前导 拼地址才不会出双斜杠
+          url=$(printf '%s' "$SITE_URL" | sed 's#/*$##')
+          base=$(printf '%s' "$BASE_PATH" | sed 's#^/*##; s#/*$##')
+          if [ -n "$base" ]; then base="/${base}"; fi
+          case "$url" in https://?* | http://?*) ;; *) echo "::error::site_url 需要带协议的完整地址"; exit 1 ;; esac
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+          echo "base=${base}" >> "$GITHUB_OUTPUT"
+
       # 始终检出数据仓默认分支；pull_request_target 下也不运行 PR 中的代码
       - name: Checkout data repository
         uses: actions/checkout@v6
@@ -111,5 +122,5 @@ jobs:
           MARKET_DATA_DIR: ${{ github.workspace }}
           TOOLS_DIR: ${{ github.workspace }}/.plugin-tools
           MARKET_BASE_BRANCH: ${{ github.event.repository.default_branch }}
-          MARKET_SITE_URL: ${{ env.SITE_URL }}${{ env.BASE_PATH }}/
+          MARKET_SITE_URL: ${{ steps.site.outputs.url }}${{ steps.site.outputs.base }}/
         run: pnpm market:bot

@@ -34,6 +34,17 @@ jobs:
     name: build-market
     runs-on: ubuntu-latest
     steps:
+      - name: Normalize site env
+        id: site
+        run: |
+          # 首尾多余的斜杠都收掉 再补一个前导 拼地址才不会出双斜杠
+          url=$(printf '%s' "$SITE_URL" | sed 's#/*$##')
+          base=$(printf '%s' "$BASE_PATH" | sed 's#^/*##; s#/*$##')
+          if [ -n "$base" ]; then base="/${base}"; fi
+          case "$url" in https://?* | http://?*) ;; *) echo "::error::site_url 需要带协议的完整地址"; exit 1 ;; esac
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+          echo "base=${base}" >> "$GITHUB_OUTPUT"
+
       # 调用方即数据仓（plugin-data）：checkout 默认落在工作区根目录
       - name: Checkout data repository
         uses: actions/checkout@v6
@@ -131,7 +142,7 @@ jobs:
           TOOLS_REPOSITORY: ${{ inputs.tools_repository }}
           # 摘要里显示的工具版本就是这个 tag
           TOOLS_REF: ${{ steps.tools.outputs.ref }}
-          PREVIOUS_API_URL: ${{ env.SITE_URL }}${{ env.BASE_PATH }}/api/v1/
+          PREVIOUS_API_URL: ${{ steps.site.outputs.url }}${{ steps.site.outputs.base }}/api/v1/
           MARKET_OPEN_ISSUES: "true"
         run: pnpm market:build
 
@@ -154,8 +165,8 @@ jobs:
           MARKET_DATA_DIR: ${{ github.workspace }}
           PUBLIC_GITHUB_OWNER: ${{ github.repository_owner }}
           PUBLIC_GITHUB_REPO: ${{ github.event.repository.name }}
-          SITE_URL: ${{ env.SITE_URL }}
-          PUBLIC_BASE_PATH: ${{ env.BASE_PATH || '/' }}
+          SITE_URL: ${{ steps.site.outputs.url }}
+          PUBLIC_BASE_PATH: ${{ steps.site.outputs.base || '/' }}
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5
