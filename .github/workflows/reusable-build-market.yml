@@ -11,14 +11,22 @@ on:
         description: 工具仓的 tag 或分支，不传时取该仓最新的版本 tag
         type: string
         required: false
+      site_url:
+        description: 站点地址，不传时按 GitHub Pages 的域名；自定义域名才需要传
+        type: string
+        required: false
+      site_base_path:
+        description: 站点部署的子路径，部署在域名根时传空
+        type: string
+        required: false
     secrets:
       CNB_TOKEN:
         description: CNB 访问令牌 提交索引与封面必需 未配置时跳过索引镜像
         required: false
 
 env:
-  SITE_URL: ${{ vars.SITE_URL || format('https://{0}.github.io', github.repository_owner) }}
-  BASE_PATH: ${{ vars.SITE_BASE_PATH || '/plugin-data' }}
+  SITE_URL: ${{ inputs.site_url || format('https://{0}.github.io', github.repository_owner) }}
+  BASE_PATH: ${{ inputs.site_base_path }}
 
 jobs:
   build:
@@ -147,7 +155,7 @@ jobs:
           PUBLIC_GITHUB_OWNER: ${{ github.repository_owner }}
           PUBLIC_GITHUB_REPO: ${{ github.event.repository.name }}
           SITE_URL: ${{ env.SITE_URL }}
-          PUBLIC_BASE_PATH: ${{ env.BASE_PATH }}
+          PUBLIC_BASE_PATH: ${{ env.BASE_PATH || '/' }}
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5
