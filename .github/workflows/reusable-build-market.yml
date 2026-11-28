@@ -16,7 +16,7 @@ on:
         type: string
         required: false
       site_base_path:
-        description: 站点部署的子路径，部署在域名根时传空
+        description: 站点部署的子路径，不传按调用方的仓库名，部署在域名根时传 /
         type: string
         required: false
     secrets:
@@ -26,7 +26,7 @@ on:
 
 env:
   SITE_URL: ${{ inputs.site_url || format('https://{0}.github.io', github.repository_owner) }}
-  BASE_PATH: ${{ inputs.site_base_path }}
+  BASE_PATH: ${{ inputs.site_base_path || format('/{0}', github.event.repository.name) }}
 
 jobs:
   build:
