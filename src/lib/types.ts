@@ -1,4 +1,4 @@
-import type { ClientConfig, SiteConfig } from "./config";
+import type { ClientConfigInput, SiteConfig } from "./config";
 
 export type MarketStatus = "listed" | "hidden" | "deprecated" | "suspended" | "removed";
 
@@ -169,7 +169,7 @@ export interface MarketPolicy {
   /** 站点品牌，缺省走引擎的中性默认值；每个数据仓各配一份 */
   site?: Partial<SiteConfig>;
   /** 客户端锁文件与自带模块根，决定依赖扫描拿哪份清单；不配则跳过依赖扫描 */
-  client?: Partial<ClientConfig>;
+  client?: ClientConfigInput;
   /** 插件模板仓 owner/name，出现在校验失败的回复里；不配则不附链接 */
   templateRepository?: string;
   reservedIds: string[];

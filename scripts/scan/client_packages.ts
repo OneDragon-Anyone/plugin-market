@@ -2,6 +2,7 @@
  * 客户端自带包清单：从客户端仓库的依赖锁文件取全部发行名，换算成 import 名后给扫描器当白名单。
  *
  * 锁文件地址与自带模块根由调用方数据仓的 policy.json 给出，引擎里不写死任何具体客户端。
+ * 锁文件可以有多份（客户端由几个仓拼起来时），包名合并成一份白名单。
  * 清单跟着客户端走，不在这里手抄。抓下来的结果落一份快照在 lock 目录，抓不到时沿用上一份，
  * 扫描结论因此可复现；只有清单真的变了才写盘，免得每轮 build 都产生提交。
  */
@@ -121,15 +122,19 @@ export async function loadClientPackages(
   client: ClientConfig,
   lockDir: string,
   log: (line: string) => void,
-  fetchText: () => Promise<string> = () => fetchLock(client.lockUrl)
+  fetchText: (url: string) => Promise<string> = fetchLock
 ): Promise<ClientPackages> {
   const roots = client.moduleRoots;
-  const previous = await readSnapshot(lockDir, client.lockUrl);
+  // 多份锁文件按配置顺序拼成指纹，换一份或调顺序就整份作废，宁可从网络重抓
+  const source = client.lockUrls.join("\n");
+  const previous = await readSnapshot(lockDir, source);
   try {
-    const modules = toModules(parseLockNames(await fetchText()));
+    // 全有或全无：少一份白名单会把客户端自带的包误报成第三方，不如整份退回快照
+    const texts = await Promise.all(client.lockUrls.map((url) => fetchText(url)));
+    const modules = toModules(texts.flatMap(parseLockNames));
     const merged = [...new Set([...modules, ...roots])].sort();
     const changed = !previous || previous.modules.join("\n") !== merged.join("\n");
-    if (changed) await writeSnapshot(lockDir, client.lockUrl, merged);
+    if (changed) await writeSnapshot(lockDir, source, merged);
     return { modules: merged, fromLock: true };
   } catch (error) {
     if (previous) {
